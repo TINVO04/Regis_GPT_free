@@ -1756,8 +1756,11 @@ async function handleChooseWorkspace() {
     renderAccounts(result.accounts || []);
     renderHotmailAccounts(result.hotmailAccounts || []);
     renderSms(result.smsState || []);
+    renderProxyPools(result.proxyPools || []);
+    renderRuntimeConfig(result.config || {});
     setSaveConfigStatus('', '');
     await refreshPreflight(true);
+    await refreshSmsPoolBalance({ silent: true, timeoutMs: 5000 });
     pushLog(`[UI] Workspace mới: ${result.workspace.workspaceDir}`);
   }
 }
@@ -2161,8 +2164,14 @@ function bindEvents() {
     renderHistory(items || []);
   });
 
-  window.desktopAPI.onWorkspaceChanged((workspace) => {
+  window.desktopAPI.onWorkspaceChanged(async (workspace) => {
     renderWorkspace(workspace);
+    try {
+      await refreshData();
+      await refreshHistory();
+    } catch (error) {
+      pushLog(`[Workspace] Refresh sau khi đổi workspace thất bại: ${error.message || 'Unknown error'}`);
+    }
   });
   window.desktopAPI.onUpdateChanged((nextState) => {
     renderUpdateState(nextState);
@@ -2235,6 +2244,12 @@ async function init() {
 
   if (el.randomMailDomain) el.mailDomain.disabled = el.randomMailDomain.checked;
   updateVpnUiState();
+
+  if (authState.authenticated) {
+    await initAuthenticatedState();
+    return;
+  }
+
   setRunningState(false, 'Locked');
   pushLog('[UI] Chưa đăng nhập');
 }
