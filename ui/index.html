@@ -1,0 +1,670 @@
+<!doctype html>
+<html lang="vi">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Codex Account Studio</title>
+  <meta name="description"
+    content="Desktop UI quản lý create/verify account với login license, log realtime, bảng dữ liệu, và lịch sử chạy." />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap"
+    rel="stylesheet">
+  <link rel="stylesheet" href="./index.css" />
+</head>
+
+<body>
+  <div class="app-bg"></div>
+
+  <main class="app-shell" id="app-shell">
+    <section class="dashboard-shell" id="dashboard-shell">
+      <header class="header-status-bar" id="topbar-main">
+        <div class="brand-block">
+          <h1 id="main-title">Codex Account Studio</h1>
+          <p id="main-subtitle">Desktop Control Panel • Create / Verify / Create+Verify</p>
+        </div>
+
+        <div class="header-status-meta">
+          <div class="compact-card update-card" id="update-card" aria-labelledby="update-title">
+            <div class="compact-copy">
+              <span class="eyebrow" id="update-title">App Update</span>
+              <strong id="update-version-text">Version 1.1.3 • Đang kiểm tra...</strong>
+              <small id="update-meta-text">Chưa có dữ liệu cập nhật</small>
+              <small id="update-notes-text" class="update-notes hidden">Không có ghi chú phát hành</small>
+              <div id="update-progress-track" class="update-progress-track hidden" aria-hidden="true">
+                <span id="update-progress-bar" class="update-progress-bar"></span>
+              </div>
+              <small id="update-path-text" class="update-path-text hidden"></small>
+            </div>
+          </div>
+        </div>
+
+        <div class="header-actions">
+          <div class="status-badge is-idle" id="run-status-badge">
+            <span class="dot" id="run-indicator-dot"></span>
+            <span id="run-indicator-text">Idle</span>
+          </div>
+          <div class="update-actions" id="update-actions">
+            <button id="check-update-button" class="btn btn-ghost btn-sm" type="button">Kiểm tra cập nhật</button>
+            <button id="download-update-button" class="btn btn-primary btn-sm hidden" type="button">Tải cập
+              nhật</button>
+            <button id="install-update-button" class="btn btn-primary btn-sm hidden" type="button">Cài</button>
+            <button id="open-release-page-button" class="btn btn-ghost btn-sm hidden" type="button">Release</button>
+          </div>
+        </div>
+      </header>
+
+      <div class="dashboard-layout" id="dashboard-content">
+        <aside class="config-panel" id="control-card">
+
+          <section class="section-block runtime-config-card">
+            <div class="section-head compact">
+              <div>
+                <span class="eyebrow">Runtime Config</span>
+                <h2>Thông số chạy</h2>
+              </div>
+            </div>
+
+            <div class="form-grid">
+              <label class="field" for="count-input">
+                <span>Số lượng</span>
+                <input id="count-input" type="number" min="1" value="1" />
+              </label>
+
+              <label class="field" for="mode-select">
+                <span>Mode chạy</span>
+                <select id="mode-select">
+                  <option value="create">Create</option>
+                  <option value="verify">Verify</option>
+                  <option value="create_verify" selected>Create + Verify</option>
+                  <option value="create_pay_unlink">Mode 4: Create-Pay-Unlink</option>
+                </select>
+              </label>
+
+              <div class="mode4-warning-note field-wide hidden" id="mode4-warning-note" role="note">
+                <strong>⚠️ Mode 4 chưa ổn định</strong>
+                <span>Chưa ổn định, lần 1 sẽ được nhưng lần 2 không chắc, mọi vấn đề khách tự chịu trách nhiệm khi reg
+                  acc plus, shop đã cố gắng hết sức, đôi lúc sẽ cần thủ công tay hoặc không khi sử dụng MODE 4 này. Xin
+                  cảm ơn</span>
+              </div>
+
+              <label class="field mode4-only" for="create-pay-unlink-stage-select">
+                <span>Mode 4 stage</span>
+                <select id="create-pay-unlink-stage-select">
+                  <option value="stage1" selected>Stage 1: Create Gmail</option>
+                  <option value="stage2">Stage 2: Claim offer checkout</option>
+                  <option value="stage3">Stage 3: Cancel subscription</option>
+                  <option value="stage4">Stage 4: 9Router verify</option>
+                </select>
+              </label>
+
+              <label class="checkbox-field mode4-submit-toggle hidden" for="create-pay-unlink-submit-checkbox">
+                <input id="create-pay-unlink-submit-checkbox" type="checkbox" checked />
+                <span>Stage 2 auto submit sau khi xác nhận 0 ₫</span>
+              </label>
+
+              <label class="field mode4-stage2-only" for="cpl-card-number-input">
+                <span>Stage 2 card number</span>
+                <input id="cpl-card-number-input" type="password" placeholder="1234 1234 1234 1234"
+                  autocomplete="off" />
+              </label>
+
+              <label class="field mode4-stage2-only" for="cpl-card-expiry-input">
+                <span>Stage 2 expiry</span>
+                <input id="cpl-card-expiry-input" type="text" placeholder="MM / YY" autocomplete="off" />
+              </label>
+
+              <label class="field mode4-stage2-only" for="cpl-card-cvc-input">
+                <span>Stage 2 CVC</span>
+                <input id="cpl-card-cvc-input" type="password" placeholder="CVC" autocomplete="off" />
+              </label>
+            </div>
+          </section>
+
+          <section class="section-block account-options-card">
+            <div class="section-head compact">
+              <div>
+                <span class="eyebrow">Account Options</span>
+                <h2>Tài khoản & mail</h2>
+              </div>
+            </div>
+
+            <div class="form-grid">
+              <label class="field" for="password-input">
+                <span>Password account</span>
+                <input id="password-input" type="password" value="@1234567890a" autocomplete="off" />
+              </label>
+
+              <label class="field" for="router-password-input">
+                <span>Password 9Router</span>
+                <input id="router-password-input" type="password" value="123456" autocomplete="off" />
+              </label>
+
+              <div class="field field-wide verify-provider-field">
+                <span>Verify provider</span>
+                <div class="verify-provider-switch" id="verify-provider-switch" role="radiogroup" aria-label="Verify provider">
+                  <button type="button" class="verify-provider-option is-active" data-verify-provider="9router" aria-pressed="true">
+                    <span class="provider-icon">9R</span>
+                    <span>
+                      <strong>9Router</strong>
+                      <small>Flow cũ</small>
+                    </span>
+                  </button>
+                  <button type="button" class="verify-provider-option" data-verify-provider="cliproxyapi" aria-pressed="false">
+                    <span class="provider-icon">CLI</span>
+                    <span>
+                      <strong>CLIProxyAPI</strong>
+                      <small>Tự lấy OAuth URL</small>
+                    </span>
+                  </button>
+                  <input id="verify-provider-select" type="hidden" value="9router" />
+                </div>
+              </div>
+
+              <div class="verify-provider-note field-wide" id="verify-provider-note">
+                <strong>9Router mode</strong>
+                <span>Giữ nguyên flow cũ: mở 9Router, login, vào Providers → Codex, tool tự bấm Add.</span>
+              </div>
+
+              <div class="cliproxyapi-panel field-wide cliproxyapi-only hidden">
+                <label class="field" for="cliproxyapi-executable-input">
+                  <span>CLIProxyAPI executable</span>
+                  <input id="cliproxyapi-executable-input" type="text" placeholder="D:\CLIProxyAPI\cli-proxy-api.exe hoặc cli-proxy-api" autocomplete="off" />
+                </label>
+                <label class="field" for="cliproxyapi-config-input">
+                  <span>CLIProxyAPI config</span>
+                  <input id="cliproxyapi-config-input" type="text" placeholder="D:\CLIProxyAPI\config.yaml hoặc /opt/CLIProxyAPI/config.yaml" autocomplete="off" />
+                </label>
+              </div>
+
+              <label class="field field-wide hidden" for="cliproxyapi-auth-url-input">
+                <span>CLIProxyAPI Auth URL</span>
+                <input id="cliproxyapi-auth-url-input" type="url" placeholder="Tự động lấy khi RUN" autocomplete="off" />
+              </label>
+
+              <label class="field field-wide" for="mail-domain-select">
+                <span>Mail domain</span>
+                <select id="mail-domain-select">
+                  <option value="otpmail.online">otpmail.online - free</option>
+                  <option value="crossabc.site">crossabc.site - free</option>
+                  <option value="999ai.org">999ai.org - free</option>
+                  <option value="hungzero.co.uk">hungzero.co.uk - free</option>
+                  <option value="cutongman.online">cutongman.online - free</option>
+                  <option value="nguyenvantruong.io.vn">nguyenvantruong.io.vn - free</option>
+                  <option value="thangterter.online" selected>thangterter.online - free</option>
+                  <option value="mail1h.com">mail1h.com (mail1h) - free</option>
+                  <option value="edumail.ovh">edumail.ovh (edumail) - free</option>
+                  <option value="hotmail">hotmail (clonemup) - paid</option>
+                  <option value="gmail-shopgmail9999">Gmail - (ShopGmail9999) - paid</option>
+                </select>
+              </label>
+
+              <div class="vpn-control is-maintenance field-wide" id="vpn-control-card" aria-disabled="true">
+                <div class="vpn-row">
+                  <label class="vpn-toggle" for="vpn-enabled-input">
+                    <input id="vpn-enabled-input" type="checkbox" disabled />
+                    <span class="vpn-switch" aria-hidden="true"></span>
+                    <span class="vpn-copy">
+                      <strong>Urban VPN đang bảo trì</strong>
+                      <small>Tính năng VPN tạm khóa để đóng gói/publish bản ổn định.</small>
+                    </span>
+                  </label>
+                  <span class="vpn-status is-maintenance" id="vpn-status-badge">MAINTENANCE</span>
+                </div>
+                <label class="vpn-path" for="vpn-extension-path-input">
+                  <span>Extension path</span>
+                  <input id="vpn-extension-path-input" type="text" placeholder="Urban VPN tạm thời bị vô hiệu hóa"
+                    autocomplete="off" disabled />
+                </label>
+              </div>
+            </div>
+          </section>
+
+          <section class="section-block provider-options-card">
+            <div class="section-head compact">
+              <div>
+                <span class="eyebrow">OTP Providers</span>
+                <h2>Dịch vụ OTP & mail</h2>
+              </div>
+            </div>
+
+            <div class="form-grid">
+              <label class="field field-wide" for="sms-key-input">
+                <span>SMSPool API Key</span>
+                <input id="sms-key-input" type="password" placeholder="Nhập API key" autocomplete="off" />
+              </label>
+
+              <div class="sms-balance-card field-wide" id="sms-balance-card" aria-live="polite">
+                <div class="sms-balance-copy">
+                  <span class="eyebrow">SMSPool Balance</span>
+                  <strong id="sms-balance-value">Chưa kiểm tra</strong>
+                  <small id="sms-balance-meta">Bấm Check để xem số dư tài khoản.</small>
+                  <small class="service-price-note">0.07 đô / sim = xác minh tối đa 3 acc</small>
+                </div>
+                <div class="service-actions">
+                  <button id="sms-balance-check-button" class="btn btn-ghost btn-sm" type="button">Check</button>
+                  <button id="smspool-open-button" class="btn btn-ghost btn-sm" type="button">Mở web</button>
+                </div>
+              </div>
+
+              <label class="field field-wide" for="shopgmail9999-key-input">
+                <span>ShopGmail9999 API Key</span>
+                <input id="shopgmail9999-key-input" type="password" placeholder="Nhập API key ShopGmail9999"
+                  autocomplete="off" />
+              </label>
+
+              <article class="sms-balance-card shopgmail-balance-card field-wide is-idle"
+                id="shopgmail9999-balance-card" aria-live="polite">
+                <div class="sms-balance-copy">
+                  <span class="eyebrow">Gmail - ShopGmail9999</span>
+                  <strong id="shopgmail9999-balance-value">Chưa kiểm tra</strong>
+                  <small id="shopgmail9999-balance-meta">500đ/Gmail • OTP 10 phút • có thể resend nhiều lần.</small>
+                </div>
+                <div class="service-actions">
+                  <button id="shopgmail9999-balance-check-button" class="btn btn-ghost btn-sm"
+                    type="button">Check</button>
+                  <button id="shopgmail9999-open-button" class="btn btn-ghost btn-sm" type="button">Mở web</button>
+                </div>
+              </article>
+
+              <label class="field field-wide" for="clonemup-key-input">
+                <span>Clonemup API Key</span>
+                <input id="clonemup-key-input" type="password" placeholder="Nhập API key mua Hotmail"
+                  autocomplete="off" />
+              </label>
+
+              <div class="sms-balance-card hotmail-balance-card field-wide" id="clonemup-balance-card"
+                aria-live="polite">
+                <div class="sms-balance-copy">
+                  <span class="eyebrow">Clonemup / Hotmail</span>
+                  <strong id="clonemup-balance-value">Chưa kiểm tra VNĐ</strong>
+                  <small id="clonemup-balance-meta">Hotmail có thể RUN: <b id="hotmail-runnable-count">0</b></small>
+                  <small class="service-price-note" id="clonemup-product-price-note">Product 7614 • 297đ /
+                    hotmail</small>
+                </div>
+                <div class="service-actions">
+                  <button id="clonemup-balance-check-button" class="btn btn-ghost btn-sm" type="button">Check</button>
+                  <button id="clonemup-open-button" class="btn btn-ghost btn-sm" type="button">Mở web</button>
+                </div>
+              </div>
+
+              <label class="field field-wide" for="clonemup-product-select">
+                <span>Hotmail product</span>
+                <select id="clonemup-product-select">
+                  <option value="7614" selected>7614 • Hotmail OAuth • 297đ/acc • còn dùng</option>
+                  <option value="16133" disabled>16133 • hết hàng / product cũ</option>
+                </select>
+              </label>
+
+              <label class="field" for="clonemup-product-id-input">
+                <span>Product ID</span>
+                <input id="clonemup-product-id-input" type="number" min="1" value="7614" />
+              </label>
+
+
+              <div class="product-note field-wide" id="clonemup-product-note" role="note">
+                <strong>Product 7614 format</strong>
+                <span>email|password|refreshToken|clientId|recoveryEmail|status • status tự set mail_ready nếu chưa
+                  có.</span>
+              </div>
+
+              <label class="field" for="hotmail-buy-amount-input">
+                <span>Số Hotmail cần mua</span>
+                <input id="hotmail-buy-amount-input" type="number" min="1" value="1" />
+              </label>
+
+              <button id="hotmail-buy-button" class="btn btn-secondary hotmail-buy-button" type="button">🛒 Mua
+                Hotmail</button>
+            </div>
+          </section>
+
+          <section class="section-block workspace-card">
+            <div class="section-head">
+              <div>
+                <span class="eyebrow">Workspace & Files</span>
+                <h2>Đường dẫn runtime</h2>
+              </div>
+              <div class="card-actions">
+                <button id="workspace-open-button" class="btn btn-ghost btn-sm" type="button">Mở data</button>
+                <button id="choose-workspace-button" class="btn btn-ghost btn-sm" type="button">📁 Chọn</button>
+              </div>
+            </div>
+
+            <div class="workspace-summary">
+              <span>Workspace directory</span>
+              <strong id="workspace-path" title="">Đang tải...</strong>
+              <small id="workspace-files-meta">accounts.txt / config.json / sms_state.json</small>
+            </div>
+          </section>
+
+          <section class="section-block preflight-card" id="preflight-card" aria-labelledby="preflight-title">
+            <div class="section-head">
+              <div>
+                <span class="eyebrow" id="preflight-title">Preflight Self-check</span>
+                <h2 id="preflight-status-text">Đang kiểm tra runtime...</h2>
+                <small id="preflight-summary-text">App đang xác minh browser bundle và workspace.</small>
+              </div>
+              <span class="mini-badge is-checking" id="preflight-badge">Checking</span>
+            </div>
+            <div class="preflight-list" id="preflight-list">
+              <div class="preflight-item is-checking">
+                <strong>Đang kiểm tra...</strong>
+                <span>Chờ kết quả preflight</span>
+              </div>
+            </div>
+          </section>
+
+        </aside>
+
+        <section class="monitoring-area">
+          <article class="data-card log-card" id="log-panel">
+            <div class="card-head">
+              <div>
+                <span class="eyebrow">Realtime Log</span>
+                <h2>Log vận hành</h2>
+              </div>
+              <div class="card-actions">
+                <span class="mini-badge" id="log-count-badge">0 lines</span>
+                <div class="segmented" id="log-filter-group" aria-label="Log filter">
+                  <button class="segment is-active" type="button" data-log-filter="all">All</button>
+                  <button class="segment" type="button" data-log-filter="info">Info</button>
+                  <button class="segment" type="button" data-log-filter="warning">Warn</button>
+                  <button class="segment" type="button" data-log-filter="error">Error</button>
+                </div>
+                <button id="pause-log-button" class="btn btn-ghost btn-sm" type="button">Pause</button>
+                <button id="copy-log-button" class="btn btn-ghost btn-sm" type="button">Copy</button>
+                <button id="clear-log-button" class="btn btn-ghost btn-sm" type="button">Clear</button>
+              </div>
+            </div>
+            <pre id="log-output" class="log-output"></pre>
+          </article>
+
+          <section class="data-grid">
+            <article class="data-card" id="accounts-panel">
+              <div class="card-head">
+                <div>
+                  <span class="eyebrow">accounts.txt</span>
+                  <h2>Accounts</h2>
+                </div>
+                <div class="table-actions">
+                  <span class="mini-badge" id="accounts-count-badge">0 rows</span>
+                  <button id="accounts-open-button" class="btn btn-ghost btn-sm" type="button">Mở data</button>
+                  <button id="accounts-edit-button" class="btn btn-ghost btn-sm" type="button">Chỉnh sửa</button>
+                  <button id="accounts-save-button" class="btn btn-primary btn-sm hidden" type="button">Lưu</button>
+                </div>
+              </div>
+              <div class="data-toolbar">
+                <div class="stats-strip" id="accounts-stats">Total 0 • Done 0 • Error 0</div>
+                <input id="accounts-search-input" class="table-search" type="search"
+                  placeholder="Search email/status..." />
+              </div>
+              <div class="table-wrap">
+                <table id="accounts-table">
+                  <thead>
+                    <tr>
+                      <th>#</th>
+                      <th>Email</th>
+                      <th>Password</th>
+                      <th>Status</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody id="accounts-table-body"></tbody>
+                </table>
+              </div>
+              <div class="pager" id="accounts-pager"></div>
+            </article>
+
+            <article class="data-card" id="sms-panel">
+              <div class="card-head">
+                <div>
+                  <span class="eyebrow">sms_state.json</span>
+                  <h2>SMS State</h2>
+                </div>
+                <div class="table-actions">
+                  <span class="mini-badge" id="sms-count-badge">0 rows</span>
+                  <button id="sms-open-button" class="btn btn-ghost btn-sm" type="button">Mở data</button>
+                  <button id="sms-edit-button" class="btn btn-ghost btn-sm" type="button">Chỉnh sửa</button>
+                  <button id="sms-save-button" class="btn btn-primary btn-sm hidden" type="button">Lưu</button>
+                </div>
+              </div>
+              <div class="data-toolbar">
+                <div class="stats-strip" id="sms-stats">Total 0 • Used 0 • Unused 0</div>
+                <input id="sms-search-input" class="table-search" type="search"
+                  placeholder="Search phone/order id..." />
+              </div>
+              <div class="table-wrap">
+                <table id="sms-table">
+                  <thead>
+                    <tr>
+                      <th>#</th>
+                      <th>Order ID</th>
+                      <th>Phone</th>
+                      <th>Used</th>
+                      <th>Updated</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody id="sms-table-body"></tbody>
+                </table>
+              </div>
+              <div class="pager" id="sms-pager"></div>
+            </article>
+
+            <article class="data-card hotmail-card" id="hotmail-panel">
+              <div class="card-head">
+                <div>
+                  <span class="eyebrow">accounts-hotmail.txt</span>
+                  <h2>Hotmail OAuth2</h2>
+                </div>
+                <div class="table-actions">
+                  <span class="mini-badge" id="hotmail-count-badge">0 rows</span>
+                  <button id="hotmail-open-button" class="btn btn-ghost btn-sm" type="button">Mở data</button>
+                  <button id="hotmail-edit-button" class="btn btn-ghost btn-sm" type="button">Chỉnh sửa</button>
+                  <button id="hotmail-save-button" class="btn btn-primary btn-sm hidden" type="button">Lưu</button>
+                </div>
+              </div>
+              <div class="hotmail-import-box" id="hotmail-import-box">
+                <label class="field field-wide" for="hotmail-import-textarea">
+                  <span>Add Hotmail thủ công / bulk (OAuth2 hoặc 2FA secret)</span>
+                  <textarea id="hotmail-import-textarea" rows="5"
+                    placeholder="email@hotmail.com|password|refresh_token|client_id&#10;email@hotmail.com|password|TOTP_SECRET&#10;email@hotmail.com password TOTP_SECRET"></textarea>
+                </label>
+                <div class="hotmail-import-actions">
+                  <label class="field hotmail-import-status-field" for="hotmail-import-status-select">
+                    <span>Status import</span>
+                    <select id="hotmail-import-status-select">
+                      <option value="mail_ready" selected>mail_ready • mail trắng chưa có ChatGPT</option>
+                      <option value="pending">pending • mail đã có ChatGPT, chờ verify/use</option>
+                      <option value="verify">verify • mail đã verify xong</option>
+                      <option value="error">error • mail lỗi / cần review</option>
+                    </select>
+                  </label>
+                  <small>Hỗ trợ OAuth2 cũ và Hotmail 2FA secret. Với dòng 2FA, app sẽ tự sinh OTP 6 số local ở bước
+                    create/verify. Status import sẽ được lưu luôn, không ép cứng mail_ready nữa.</small>
+                  <button id="hotmail-import-button" class="btn btn-secondary btn-sm" type="button">＋ Add
+                    Hotmail</button>
+                </div>
+              </div>
+              <div class="data-toolbar">
+                <div class="stats-strip" id="hotmail-stats">Runnable 0 • Verify 0 • Error 0</div>
+                <input id="hotmail-search-input" class="table-search" type="search"
+                  placeholder="Search mail/status..." />
+              </div>
+              <div class="table-wrap hotmail-table-wrap">
+                <table id="hotmail-table">
+                  <thead>
+                    <tr>
+                      <th>#</th>
+                      <th>Mail</th>
+                      <th>Password</th>
+                      <th>OAuth / 2FA Secret</th>
+                      <th>Client ID / Type</th>
+                      <th>Status</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody id="hotmail-table-body"></tbody>
+                </table>
+              </div>
+              <div class="pager" id="hotmail-pager"></div>
+            </article>
+
+            <article class="data-card proxy-status-card" id="proxy-status-panel">
+              <div class="card-head">
+                <div>
+                  <span class="eyebrow">Proxy runtime log</span>
+                  <h2>Tình trạng proxy</h2>
+                  <small>Theo dõi proxy đang dùng, proxy lỗi bị disable và fallback IP máy.</small>
+                </div>
+                <div class="card-actions">
+                  <span class="mini-badge" id="proxy-log-count-badge">0 lines</span>
+                  <button id="proxy-log-clear-button" class="btn btn-ghost btn-sm" type="button">Clear</button>
+                </div>
+              </div>
+              <pre class="proxy-log-output" id="proxy-log-output">Chưa có log proxy.</pre>
+            </article>
+          </section>
+
+          <article class="data-card proxy-card" id="proxy-pools-panel">
+            <div class="card-head">
+              <div>
+                <span class="eyebrow">Proxy Pools</span>
+                <h2>Proxy Pools</h2>
+                <small>Quản lý proxy dùng cho Create + Verify và 9Router.</small>
+              </div>
+              <div class="card-actions proxy-toolbar">
+                <span class="mini-badge" id="proxy-count-badge">Total: 0</span>
+                <button id="proxy-open-button" class="btn btn-ghost btn-sm" type="button">Mở data</button>
+                <label class="proxy-rotation-toggle"><span>Round Robin</span><input id="proxy-round-robin-input"
+                    type="checkbox" /></label>
+                <label class="proxy-apply-toggle"
+                  title="Nhắc nhở: chỉ nên dùng khi 9Router đã add từ 2 proxy trở lên."><span>One-to-one</span><input
+                    id="proxy-apply-rotate-input" type="checkbox" /></label>
+                <label class="proxy-sticky-field"><span>Sticky</span><input id="proxy-sticky-input" type="number"
+                    min="1" value="1" /></label>
+                <button id="vercel-relay-button" class="btn btn-ghost btn-sm" type="button">☁️ Vercel Relay</button>
+                <button id="proxy-import-button" class="btn btn-secondary btn-sm" type="button">⬆ Batch Import</button>
+                <button id="proxy-bulk-toggle-button" class="btn btn-secondary btn-sm proxy-bulk-toggle" type="button"
+                  disabled>✅ Bật tất cả</button>
+                <button id="proxy-add-button" class="btn btn-primary btn-sm" type="button">＋ Add Proxy Pool</button>
+              </div>
+            </div>
+            <div class="proxy-list" id="proxy-list">
+              <div class="proxy-empty">No proxy pool entries yet</div>
+            </div>
+          </article>
+
+          <article class="data-card history-card" id="history-panel">
+            <div class="card-head">
+              <div>
+                <span class="eyebrow">Run History</span>
+                <h2>Lịch sử chạy</h2>
+              </div>
+              <span class="mini-badge" id="history-count-badge">0 items</span>
+            </div>
+            <div class="data-toolbar">
+              <div class="stats-strip" id="history-stats">OK 0 • Fail 0 • Running 0</div>
+              <input id="history-search-input" class="table-search" type="search" placeholder="Search mode/status..." />
+            </div>
+            <div class="table-wrap history-table-wrap">
+              <table id="history-table">
+                <thead>
+                  <tr>
+                    <th>Started</th>
+                    <th>Mode</th>
+                    <th>Count</th>
+                    <th>OK</th>
+                    <th>Fail</th>
+                    <th>Duration</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody id="history-table-body"></tbody>
+              </table>
+            </div>
+            <div class="pager" id="history-pager"></div>
+          </article>
+        </section>
+      </div>
+
+      <section class="section-block actions-block" id="floating-actions-card">
+        <div class="section-head compact actions-head">
+          <div>
+            <span class="eyebrow">Actions</span>
+            <h2>Điều khiển phiên chạy</h2>
+          </div>
+        </div>
+        <div class="action-bar" id="actions-row">
+          <button id="run-button" class="btn btn-primary" type="button">▶ Run</button>
+          <button id="stop-button" class="btn btn-danger" type="button" disabled>■ Stop</button>
+          <button id="force-stop-button" class="btn btn-danger btn-force" type="button" disabled>⛔ Force Stop</button>
+          <button id="save-config-button" class="btn btn-secondary" type="button">💾 Lưu</button>
+          <button id="refresh-button" class="btn btn-secondary" type="button">↻ Refresh</button>
+        </div>
+        <p class="save-status hidden" id="save-config-status" role="status" aria-live="polite"></p>
+        <p class="hint" id="hint-text">Config lưu theo workspace đang chọn. Khi chạy, các input quan trọng sẽ bị khóa để
+          tránh đổi giữa phiên.</p>
+      </section>
+
+    </section>
+  </main>
+
+  <div class="modal-backdrop hidden" id="proxy-modal-backdrop">
+    <form class="modal-card hidden" id="proxy-add-modal">
+      <div class="modal-head">
+        <h2>Add Proxy Pool</h2><button type="button" class="modal-close" data-close-proxy-modal>×</button>
+      </div>
+      <label class="field"><span>Name</span><input id="proxy-name-input" type="text"
+          placeholder="Office Proxy" /></label>
+      <label class="field"><span>Proxy URL</span><input id="proxy-url-input" type="text"
+          placeholder="58.187.157.67:42242:fxKUgS:WQgBdD hoặc http://user:pass@host:port" /></label>
+      <label class="toggle-field"><input id="proxy-kunproxy-api-input" type="checkbox" /><span>Dùng KunProxy API tự lấy proxy</span></label>
+      <div id="proxy-kunproxy-fields" class="hidden">
+        <label class="field"><span>KunProxy API Key</span><input id="proxy-kunproxy-key-input" type="password"
+            placeholder="e54163ec9840cf955862140b15e64a94" /></label>
+        <label class="field"><span>Mã đơn hàng hoặc loại proxy</span><input id="proxy-kunproxy-order-input" type="text"
+            placeholder="VD: KWL01438 hoặc Key_xoay_dan_cu_vn" /></label>
+      </div>
+      <label class="field"><span>No Proxy</span><input id="proxy-no-proxy-input" type="text"
+          value="localhost,127.0.0.1,internal" /></label>
+      <label class="toggle-field"><input id="proxy-active-input" type="checkbox" checked /><span>Active</span></label>
+      <label class="toggle-field"><input id="proxy-strict-input" type="checkbox" /><span>Strict Proxy</span></label>
+      <div class="modal-actions"><button type="submit" class="btn btn-primary">Save</button><button type="button"
+          class="btn btn-ghost" data-close-proxy-modal>Cancel</button></div>
+    </form>
+
+    <form class="modal-card hidden" id="proxy-import-modal">
+      <div class="modal-head">
+        <h2>Batch Import Proxies</h2><button type="button" class="modal-close" data-close-proxy-modal>×</button>
+      </div>
+      <label class="field"><span>Proxy List (One per line)</span><textarea id="proxy-import-textarea" rows="7"
+          placeholder="58.187.157.67:42242:fxKUgS:WQgBdD&#10;http://user:pass@127.0.0.1:7897&#10;127.0.0.1:7897:user:pass"></textarea></label>
+      <small class="hint">Hỗ trợ: host:port:user:pass, protocol://user:pass@host:port và host:port.</small>
+      <div class="modal-actions"><button type="submit" class="btn btn-primary">Import</button><button type="button"
+          class="btn btn-ghost" data-close-proxy-modal>Cancel</button></div>
+    </form>
+
+    <form class="modal-card hidden" id="vercel-relay-modal">
+      <div class="modal-head">
+        <h2>Deploy Vercel Relay</h2><button type="button" class="modal-close" data-close-proxy-modal>×</button>
+      </div>
+      <div class="info-box"><strong>What is Vercel Relay?</strong><span>Deploy relay nhỏ lên Vercel. Token chỉ dùng lúc
+          deploy, app không lưu token.</span></div>
+      <label class="field"><span>Vercel API Token</span><input id="vercel-token-input" type="password"
+          placeholder="your-vercel-api-token" autocomplete="off" /></label>
+      <label class="field"><span>Project Name</span><input id="vercel-project-input" type="text"
+          value="vercel-relay" /></label>
+      <label class="field"><span>Shared Secret (khuyến nghị)</span><input id="vercel-secret-input" type="password"
+          placeholder="để trống nếu không dùng" /></label>
+      <a class="token-link" href="https://vercel.com/account/tokens" target="_blank">Get token →</a>
+      <div class="modal-actions"><button type="submit" class="btn btn-primary">Deploy</button><button type="button"
+          class="btn btn-ghost" data-close-proxy-modal>Cancel</button></div>
+    </form>
+  </div>
+
+  <script src="./app.js" defer></script>
+</body>
+
+</html>

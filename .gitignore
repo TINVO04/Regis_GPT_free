@@ -1,0 +1,53 @@
+# Dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+config.json
+accounts.txt
+accounts-hotmail.txt
+sms_state.json
+proxy_pools.json
+*.log
+log-*.txt
+
+# Runtime data
+.runtime/
+dist/
+build/
+release/
+out/
+.cache/
+.cache-loader/
+
+# Bundled / downloaded browsers (too large for Git)
+bundled-browsers/
+ms-playwright/
+playwright-report/
+test-results/
+
+# Electron build outputs
+*.asar
+*.blockmap
+*.exe
+*.dmg
+*.AppImage
+*.deb
+*.rpm
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
