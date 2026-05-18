@@ -84,8 +84,16 @@ export class SMSPoolService {
     try {
       const res = await this.fetchJson(url, { timeoutMs: 15000, shouldStop });
       if (res.success) {
-        console.log(`[SMSPool] Đã thuê số mới: +${res.cc}${res.phonenumber} (ID: ${res.orderid})`);
-        return res;
+        const normalized = {
+          ...res,
+          service,
+          country,
+          maxPrice,
+          countryCode: country === 12 ? 'PH' : 'US',
+          dialCode: `${res.cc ? `+${res.cc}` : country === 12 ? '+63' : '+1'}`,
+        };
+        console.log(`[SMSPool] Đã thuê số mới (${normalized.countryCode}): +${res.cc}${res.phonenumber} (ID: ${res.orderid})`);
+        return normalized;
       }
       throw new Error(res.message || 'Hết số hoặc không đủ số dư');
     } catch (error) {
