@@ -1966,148 +1966,87 @@ ipcMain.handle('run:start', async (_event, payload) => {
       return null;
     };
 
-    const getConfiguredSmsCountry = (core = null, smsItem = null) => {
-      const rawCountry = Number.parseInt(smsItem?.country ?? core?.__smsCurrentItem?.country ?? core?.config?.smsPoolCountry ?? core?.config?.sms_pool_country ?? core?.config?.smspool_country ?? smsPoolCountry, 10);
+    const getConfiguredSmsCountry = (core = null) => {
+      const rawCountry = Number.parseInt(core?.config?.smsPoolCountry ?? core?.config?.sms_pool_country ?? core?.config?.smspool_country ?? smsPoolCountry, 10);
       if (rawCountry === 12) {
-        return { country: 12, countryName: 'Philippines', dialCode: '+63', countryCode: 'PH', aliases: ['Philippines', 'PH', '+63'] };
+        return { country: 12, countryName: 'Philippines', dialCode: '+63', countryCode: 'PH' };
       }
-      return { country: 1, countryName: 'United States', dialCode: '+1', countryCode: 'US', aliases: ['United States', 'US', '+1'] };
+      return { country: 1, countryName: 'United States', dialCode: '+1', countryCode: 'US' };
     };
 
-    const getOpenAiSelectedPhoneCountryText = async (page) => page.evaluate(() => {
-      const selectors = [
-        'button',
-        '[role="button"]',
-        '[aria-haspopup="listbox"]',
-        '[aria-haspopup="menu"]',
-      ];
-      const nodes = selectors.flatMap((selector) => Array.from(document.querySelectorAll(selector)));
-      const candidate = nodes.find((node) => {
-        const text = (node.innerText || node.textContent || '').replace(/\s+/g, ' ').trim();
-        return /\+\d{1,4}/.test(text) && /United States|Philippines|Vietnam|Turkey|Tunisia|Uganda|Ukraine|Emirates|Turks|Tuvalu|Virgin/i.test(text);
-      });
-      return (candidate?.innerText || candidate?.textContent || '').replace(/\s+/g, ' ').trim();
-    }).catch(() => '');
-
-    const clickOpenAiCountryDropdown = async (page) => {
-      const clicked = await page.evaluate(() => {
-        const selectors = ['button', '[role="button"]', '[aria-haspopup="listbox"]', '[aria-haspopup="menu"]'];
-        const nodes = selectors.flatMap((selector) => Array.from(document.querySelectorAll(selector)));
-        const candidate = nodes.find((node) => {
-          const text = (node.innerText || node.textContent || '').replace(/\s+/g, ' ').trim();
-          return /\+\d{1,4}/.test(text) && /United States|Philippines|Vietnam|Turkey|Tunisia|Uganda|Ukraine|Emirates|Turks|Tuvalu|Virgin/i.test(text);
-        });
-        if (!candidate) return false;
-        candidate.scrollIntoView({ block: 'center', inline: 'center' });
-        candidate.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
-        candidate.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
-        candidate.click();
-        return true;
-      }).catch(() => false);
-      if (clicked) return true;
-
-      const dropdown = page.locator([
-        'button:has-text("United States")',
-        'button:has-text("Philippines")',
-        'button:has-text("+1")',
-        'button:has-text("+63")',
-        '[role="button"]:has-text("United States")',
-        '[role="button"]:has-text("Philippines")',
-        '[aria-haspopup="listbox"]',
-        '[aria-haspopup="menu"]',
-      ].join(', ')).first();
-      if (!await dropdown.isVisible({ timeout: 2500 }).catch(() => false)) return false;
-      await dropdown.click({ timeout: 5000, force: true }).catch(() => {});
-      return true;
-    };
-
-    const clickOpenAiCountryOption = async (page, country) => page.evaluate(({ countryName, dialCode }) => {
-      const norm = (value) => (value || '').replace(/\s+/g, ' ').trim();
-      const nodes = Array.from(document.querySelectorAll('[role="option"], [role="menuitem"], li, button, div'));
-      const candidate = nodes.find((node) => {
-        const text = norm(node.innerText || node.textContent || '');
-        return text.includes(countryName) || text.includes(dialCode);
-      });
-      if (!candidate) return false;
-      candidate.scrollIntoView({ block: 'center', inline: 'center' });
-      candidate.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
-      candidate.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
-      candidate.click();
-      return true;
-    }, country).catch(() => false);
-
-    const selectConfiguredPhoneCountry = async (core, page, smsItem = null) => {
+    const selectConfiguredPhoneCountry = async (core, page) => {
       if (!page) return false;
-      const country = getConfiguredSmsCountry(core, smsItem);
+      const country = getConfiguredSmsCountry(core);
       if (country.country === 1) return core.__originalSelectUsPhoneCountry?.(page) ?? true;
 
       const dialPattern = country.dialCode.replace('+', '\\+');
-      const selectedBefore = await getOpenAiSelectedPhoneCountryText(page);
-      if (new RegExp(`${country.countryName}|${dialPattern}`).test(selectedBefore)) {
+      const pageText = await page.locator('body').innerText({ timeout: 1000 }).catch(() => '');
+      if (new RegExp(`${country.countryName}|${dialPattern}`).test(pageText)) {
         core.log?.(`✅ Phone country đã là ${country.countryName} (${country.dialCode}).`);
         return true;
       }
 
-      for (let attempt = 1; attempt <= 3; attempt += 1) {
-        core.log?.(`🌏 Đang chọn country phone ${country.countryName} (${country.dialCode}) trên OpenAI (${attempt}/3)...`);
-        const opened = await clickOpenAiCountryDropdown(page);
-        if (!opened) {
-          core.log?.(`⚠️ Không click được dropdown country OpenAI để chọn ${country.countryName}.`, 'WARNING');
-          await core.sleep?.(700);
-          continue;
-        }
-        await core.sleep?.(700);
+      const dropdown = page.locator([
+        'button:has-text("Vietnam")',
+        'button:has-text("United States")',
+        'button:has-text("+84")',
+        'button:has-text("+1")',
+        '[role="button"]:has-text("Vietnam")',
+        '[role="button"]:has-text("United States")',
+        '[aria-haspopup="listbox"]',
+        '[aria-haspopup="menu"]',
+      ].join(', ')).first();
 
-        const searchInput = page.locator('input[placeholder*="Search" i], input[type="search"], input[aria-label*="Search" i]').first();
-        if (await searchInput.isVisible({ timeout: 1000 }).catch(() => false)) {
-          await searchInput.fill(country.countryName, { timeout: 5000 }).catch(async () => {
-            await page.keyboard.press('Control+A').catch(() => {});
-            await page.keyboard.type(country.countryName, { delay: 30 }).catch(() => {});
-          });
-          await core.sleep?.(500);
-        } else {
-          await page.keyboard.press('Control+A').catch(() => {});
-          await page.keyboard.type(country.countryName, { delay: 30 }).catch(() => {});
-          await core.sleep?.(500);
-        }
-
-        let optionClicked = await clickOpenAiCountryOption(page, country);
-        if (!optionClicked) {
-          const option = page.locator([
-            `[role="option"]:has-text("${country.countryName}")`,
-            `[role="menuitem"]:has-text("${country.countryName}")`,
-            `li:has-text("${country.countryName}")`,
-            `button:has-text("${country.countryName}")`,
-            `[role="option"]:has-text("${country.dialCode}")`,
-            `div:has-text("${country.countryName}")`,
-          ].join(', ')).first();
-          if (await option.isVisible({ timeout: 2500 }).catch(() => false)) {
-            await option.click({ timeout: 5000, force: true }).catch(() => {});
-            optionClicked = true;
-          }
-        }
-        if (!optionClicked) await page.keyboard.press('Enter').catch(() => {});
-
-        await core.sleep?.(900);
-        await page.keyboard.press('Escape').catch(() => {});
-        const selectedAfter = await getOpenAiSelectedPhoneCountryText(page);
-        if (new RegExp(`${country.countryName}|${dialPattern}`).test(selectedAfter)) {
-          core.log?.(`✅ Đã chọn country phone ${country.countryName} (${country.dialCode}) trước khi nhập SMS.`);
-          return true;
-        }
-        core.log?.(`⚠️ OpenAI vẫn chưa đổi sang ${country.countryName}. Hiện tại: ${selectedAfter || 'không đọc được'}.`, 'WARNING');
+      if (!await dropdown.isVisible({ timeout: 5000 }).catch(() => false)) {
+        core.log?.(`⚠️ Không thấy dropdown chọn quốc gia phone để chọn ${country.countryName}; vẫn nhập số theo SMSPool.`, 'WARNING');
+        return false;
       }
 
-      core.log?.(`❌ Không chọn được country ${country.countryName} (${country.dialCode}); bỏ số này để tránh nhập sai country.`, 'ERROR');
-      return false;
+      await dropdown.click({ timeout: 8000 }).catch(() => {});
+      await core.sleep?.(800);
+
+      const searchInput = page.locator('input[placeholder*="Search" i], input[type="search"], input[aria-label*="Search" i]').first();
+      if (await searchInput.isVisible({ timeout: 1500 }).catch(() => false)) {
+        await searchInput.fill(country.countryName, { timeout: 5000 }).catch(async () => {
+          await page.keyboard.type(country.countryName, { delay: 40 }).catch(() => {});
+        });
+        await core.sleep?.(600);
+      } else {
+        await page.keyboard.type(country.countryName, { delay: 40 }).catch(() => {});
+        await core.sleep?.(600);
+      }
+
+      const option = page.locator([
+        `[role="option"]:has-text("${country.countryName}")`,
+        `[role="menuitem"]:has-text("${country.countryName}")`,
+        `li:has-text("${country.countryName}")`,
+        `button:has-text("${country.countryName}")`,
+        `div:has-text("${country.countryName}"):has-text("${country.dialCode}")`,
+        `[role="option"]:has-text("${country.dialCode}")`,
+      ].join(', ')).first();
+
+      if (await option.isVisible({ timeout: 7000 }).catch(() => false)) {
+        await option.click({ timeout: 8000, force: true }).catch(async () => {
+          await page.keyboard.press('Enter').catch(() => {});
+        });
+      } else {
+        await page.keyboard.press('Enter').catch(() => {});
+      }
+
+      await core.sleep?.(1000);
+      await page.keyboard.press('Escape').catch(() => {});
+      const confirmText = await page.locator('body').innerText({ timeout: 1000 }).catch(() => '');
+      const selected = new RegExp(`${country.countryName}|${dialPattern}`).test(confirmText);
+      if (selected) core.log?.(`✅ Đã chọn country phone ${country.countryName} (${country.dialCode}) trước khi nhập SMS.`);
+      else core.log?.(`⚠️ Chưa xác nhận được country ${country.countryName} (${country.dialCode}) trên UI OpenAI.`, 'WARNING');
+      return selected;
     };
 
     const fillPhoneNumberOnCurrentPage = async (core, page, smsItem) => {
       const phoneNumber = `${smsItem?.phoneNumber || ''}`.trim();
       if (!page || !phoneNumber) return false;
 
-      const countrySelected = await selectConfiguredPhoneCountry(core, page, smsItem).catch(() => false);
-      if (!countrySelected && getConfiguredSmsCountry(core, smsItem).country !== 1) return false;
+      await selectConfiguredPhoneCountry(core, page).catch(() => false);
       const phoneInput = await getPhoneInputLocator(page);
       if (!phoneInput) return false;
 
@@ -2298,22 +2237,8 @@ ipcMain.handle('run:start', async (_event, payload) => {
       ChatGPTAccountCreatorCore.prototype.getValidSmsItem = async function patchedSamePageGetValidSmsItem(smsService, excludedOrderIds = [], incorrectOrderIds = [], exhaustedOrderIds = [], ...args) {
         if (smsService) smsService.__smsRetryCore = this;
         this.__smsPhoneRetryContext = { smsService, excludedOrderIds, incorrectOrderIds, exhaustedOrderIds };
-        const country = getConfiguredSmsCountry(this);
-        if (Array.isArray(this.smsList)) {
-          this.smsList = this.smsList.filter((item) => {
-            const itemCountry = Number.parseInt(item?.country ?? country.country, 10) || country.country;
-            const itemDial = `${item?.dialCode || item?.cc || ''}`.replace(/^\+?/, '+');
-            if (country.country === 12) return itemCountry === 12 || itemDial === '+63';
-            return itemCountry === 1 || itemDial === '+1' || (!item?.country && !item?.dialCode && !item?.cc);
-          });
-        }
         purgeUsedUpSmsItems(this, 'before_pick_candidate');
         const smsItem = await originalGetValidSmsItem.call(this, smsService, excludedOrderIds, incorrectOrderIds, exhaustedOrderIds, ...args);
-        if (smsItem) {
-          smsItem.country = smsItem.country ?? country.country;
-          smsItem.countryCode = smsItem.countryCode || country.countryCode;
-          smsItem.dialCode = smsItem.dialCode || country.dialCode;
-        }
         this.__smsCurrentStateItem = smsItem;
         this.__smsCurrentItem = smsItem ? { ...smsItem } : smsItem;
         return this.__smsCurrentItem;
