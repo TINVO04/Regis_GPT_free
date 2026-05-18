@@ -1966,87 +1966,11 @@ ipcMain.handle('run:start', async (_event, payload) => {
       return null;
     };
 
-    const getConfiguredSmsCountry = (core = null) => {
-      const rawCountry = Number.parseInt(core?.config?.smsPoolCountry ?? core?.config?.sms_pool_country ?? core?.config?.smspool_country ?? smsPoolCountry, 10);
-      if (rawCountry === 12) {
-        return { country: 12, countryName: 'Philippines', dialCode: '+63', countryCode: 'PH' };
-      }
-      return { country: 1, countryName: 'United States', dialCode: '+1', countryCode: 'US' };
-    };
-
-    const selectConfiguredPhoneCountry = async (core, page) => {
-      if (!page) return false;
-      const country = getConfiguredSmsCountry(core);
-      if (country.country === 1) return core.__originalSelectUsPhoneCountry?.(page) ?? true;
-
-      const dialPattern = country.dialCode.replace('+', '\\+');
-      const pageText = await page.locator('body').innerText({ timeout: 1000 }).catch(() => '');
-      if (new RegExp(`${country.countryName}|${dialPattern}`).test(pageText)) {
-        core.log?.(`✅ Phone country đã là ${country.countryName} (${country.dialCode}).`);
-        return true;
-      }
-
-      const dropdown = page.locator([
-        'button:has-text("Vietnam")',
-        'button:has-text("United States")',
-        'button:has-text("+84")',
-        'button:has-text("+1")',
-        '[role="button"]:has-text("Vietnam")',
-        '[role="button"]:has-text("United States")',
-        '[aria-haspopup="listbox"]',
-        '[aria-haspopup="menu"]',
-      ].join(', ')).first();
-
-      if (!await dropdown.isVisible({ timeout: 5000 }).catch(() => false)) {
-        core.log?.(`⚠️ Không thấy dropdown chọn quốc gia phone để chọn ${country.countryName}; vẫn nhập số theo SMSPool.`, 'WARNING');
-        return false;
-      }
-
-      await dropdown.click({ timeout: 8000 }).catch(() => {});
-      await core.sleep?.(800);
-
-      const searchInput = page.locator('input[placeholder*="Search" i], input[type="search"], input[aria-label*="Search" i]').first();
-      if (await searchInput.isVisible({ timeout: 1500 }).catch(() => false)) {
-        await searchInput.fill(country.countryName, { timeout: 5000 }).catch(async () => {
-          await page.keyboard.type(country.countryName, { delay: 40 }).catch(() => {});
-        });
-        await core.sleep?.(600);
-      } else {
-        await page.keyboard.type(country.countryName, { delay: 40 }).catch(() => {});
-        await core.sleep?.(600);
-      }
-
-      const option = page.locator([
-        `[role="option"]:has-text("${country.countryName}")`,
-        `[role="menuitem"]:has-text("${country.countryName}")`,
-        `li:has-text("${country.countryName}")`,
-        `button:has-text("${country.countryName}")`,
-        `div:has-text("${country.countryName}"):has-text("${country.dialCode}")`,
-        `[role="option"]:has-text("${country.dialCode}")`,
-      ].join(', ')).first();
-
-      if (await option.isVisible({ timeout: 7000 }).catch(() => false)) {
-        await option.click({ timeout: 8000, force: true }).catch(async () => {
-          await page.keyboard.press('Enter').catch(() => {});
-        });
-      } else {
-        await page.keyboard.press('Enter').catch(() => {});
-      }
-
-      await core.sleep?.(1000);
-      await page.keyboard.press('Escape').catch(() => {});
-      const confirmText = await page.locator('body').innerText({ timeout: 1000 }).catch(() => '');
-      const selected = new RegExp(`${country.countryName}|${dialPattern}`).test(confirmText);
-      if (selected) core.log?.(`✅ Đã chọn country phone ${country.countryName} (${country.dialCode}) trước khi nhập SMS.`);
-      else core.log?.(`⚠️ Chưa xác nhận được country ${country.countryName} (${country.dialCode}) trên UI OpenAI.`, 'WARNING');
-      return selected;
-    };
-
     const fillPhoneNumberOnCurrentPage = async (core, page, smsItem) => {
       const phoneNumber = `${smsItem?.phoneNumber || ''}`.trim();
       if (!page || !phoneNumber) return false;
 
-      await selectConfiguredPhoneCountry(core, page).catch(() => false);
+      await core.selectUsPhoneCountry?.(page).catch(() => false);
       const phoneInput = await getPhoneInputLocator(page);
       if (!phoneInput) return false;
 
@@ -2221,16 +2145,6 @@ ipcMain.handle('run:start', async (_event, payload) => {
 
       return null;
     };
-
-    const originalSelectUsPhoneCountry = ChatGPTAccountCreatorCore.prototype.selectUsPhoneCountry;
-    if (typeof originalSelectUsPhoneCountry === 'function') {
-      ChatGPTAccountCreatorCore.prototype.__originalSelectUsPhoneCountry = originalSelectUsPhoneCountry;
-      ChatGPTAccountCreatorCore.prototype.selectUsPhoneCountry = async function patchedSelectConfiguredPhoneCountry(page, ...args) {
-        const country = getConfiguredSmsCountry(this);
-        if (country.country === 1) return originalSelectUsPhoneCountry.call(this, page, ...args);
-        return selectConfiguredPhoneCountry(this, page);
-      };
-    }
 
     const originalGetValidSmsItem = ChatGPTAccountCreatorCore.prototype.getValidSmsItem;
     if (typeof originalGetValidSmsItem === 'function') {
