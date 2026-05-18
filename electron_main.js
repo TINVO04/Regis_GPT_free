@@ -141,6 +141,7 @@ function ensureWorkspaceFiles(state) {
         selected_mail_domain: 'thangterter.online',
         random_mail_domain: false,
         mail_domains: [
+          'tinyhost-random',
           'otpmail.online',
           'crossabc.site',
           '999ai.org',

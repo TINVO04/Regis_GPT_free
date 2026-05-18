@@ -40,6 +40,14 @@ export class MailOtpService {
     },
   };
 
+  static TINYHOST_PROVIDER = {
+    label: 'tinyhost',
+    baseUrl: 'https://tinyhost.shop',
+    referer: 'https://tinyhost.shop/',
+    origin: 'https://tinyhost.shop',
+    mode: 'tinyhost',
+  };
+
   constructor({ logger = null, sleep = null } = {}) {
     this.logger = logger;
     this.sleep = sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
@@ -86,7 +94,36 @@ export class MailOtpService {
   }
 
   async createRandomEmail(domain) {
-    const provider = MailOtpService.TMAIL_PROVIDERS[`${domain || ''}`.trim().toLowerCase()];
+    const requestedDomain = `${domain || ''}`.trim().toLowerCase();
+    if (requestedDomain === 'tinyhost-random') {
+      const provider = MailOtpService.TINYHOST_PROVIDER;
+      const headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        Accept: 'application/json, text/plain, */*',
+        Referer: provider.referer,
+        Origin: provider.origin,
+      };
+      const randomUser = () => `gpt${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`.toLowerCase();
+
+      for (let attempt = 1; attempt <= 6; attempt += 1) {
+        this.log(attempt === 1 ? '📧 Lấy random domain/email từ Tinyhost...' : `📧 Tinyhost random lại email (${attempt}/6)...`);
+        const response = await fetch(`${provider.baseUrl}/api/random-domains?page=1&limit=20`, { headers, timeout: 20000 });
+        if (!response.ok) throw new Error(`tinyhost random domains HTTP ${response.status}`);
+        const data = await response.json().catch(() => ({}));
+        const domains = Array.isArray(data?.domains) ? data.domains : [];
+        const mailboxDomain = domains.map((item) => `${item || ''}`.trim().toLowerCase()).find((item) => /^[^@\s]+\.[^@\s]+$/.test(item));
+        if (!mailboxDomain) throw new Error('Tinyhost random domains response không có domain hợp lệ');
+
+        const email = `${randomUser()}@${mailboxDomain}`;
+        this.createdMailboxProviders.set(email, provider);
+        this.log(`📧 Tinyhost random email: ${email}`);
+        return email;
+      }
+
+      throw new Error('Tinyhost không lấy được mailbox ổn định');
+    }
+
+    const provider = MailOtpService.TMAIL_PROVIDERS[requestedDomain];
     if (!provider) return '';
 
     const blockedMailboxDomains = new Set(['gersmart.com']);
@@ -310,9 +347,14 @@ export class MailOtpService {
       return null;
     }
 
-    const url = provider.baseUrl
-      ? `${provider.baseUrl}/api/messages/${encodeURIComponent(normalizedEmail)}/${encodeURIComponent(provider.apiKey)}`
-      : provider.url;
+    const isTinyhostProvider = provider.mode === 'tinyhost' || provider.label === 'tinyhost';
+    const tinyhostParts = normalizedEmail.split('@');
+    const tinyhostUser = tinyhostParts[0] || '';
+    const url = isTinyhostProvider
+      ? `${provider.baseUrl}/api/email/${encodeURIComponent(domain)}/${encodeURIComponent(tinyhostUser)}/?page=1&limit=20`
+      : provider.baseUrl
+        ? `${provider.baseUrl}/api/messages/${encodeURIComponent(normalizedEmail)}/${encodeURIComponent(provider.apiKey)}`
+        : provider.url;
     const headers = {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
       Accept: 'application/json, text/plain, */*',
@@ -332,6 +374,28 @@ export class MailOtpService {
         const rawText = await response.text();
         let data = null;
         try { data = rawText ? JSON.parse(rawText) : {}; } catch { data = { raw: rawText }; }
+
+        if (isTinyhostProvider && Array.isArray(data?.emails) && data.emails.length > 0) {
+          const detailedEmails = [];
+          for (const message of data.emails.slice(0, 5)) {
+            const messageId = `${message?.id || message?.message_id || ''}`.trim();
+            if (!messageId) {
+              detailedEmails.push(message);
+              continue;
+            }
+            try {
+              const detailUrl = `${provider.baseUrl}/api/email/${encodeURIComponent(domain)}/${encodeURIComponent(tinyhostUser)}/${encodeURIComponent(messageId)}`;
+              const detailResponse = await fetch(detailUrl, { headers, timeout: 12000 });
+              if (!detailResponse.ok) throw new Error(`HTTP ${detailResponse.status}`);
+              const detail = await detailResponse.json().catch(() => null);
+              detailedEmails.push({ ...message, ...(detail || {}) });
+            } catch {
+              detailedEmails.push(message);
+            }
+          }
+          data = { ...data, emails: detailedEmails };
+        }
+
         const candidates = collectCandidates(data);
         const { candidate, skippedOldOtp } = selectFreshCandidate(candidates);
         retryPayload = { attempt, candidates, skippedOldOtp };
