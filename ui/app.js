@@ -56,7 +56,6 @@ const el = {
   randomMailDomain: document.getElementById('random-mail-domain-input'),
   tinyhostDomain: document.getElementById('tinyhost-domain-input'),
   headless: document.getElementById('headless-input'),
-  browserMinimize: document.getElementById('browser-minimize-input'),
   count: document.getElementById('count-input'),
   mode: document.getElementById('mode-select'),
   runtimeConfigCard: document.querySelector('.runtime-config-card'),
@@ -878,7 +877,6 @@ function renderRuntimeConfig(config = {}) {
   if (el.tinyhostDomain && config.tinyhost_domain !== undefined) el.tinyhostDomain.value = config.tinyhost_domain || '';
   if (el.randomMailDomain && config.random_mail_domain !== undefined) el.randomMailDomain.checked = config.random_mail_domain === true;
   if (el.headless && config.headless !== undefined) el.headless.checked = config.headless === true;
-  if (el.browserMinimize && config.browser_minimize !== undefined) el.browserMinimize.checked = config.browser_minimize === true && config.headless !== true;
   if (config.clonemup_api_key !== undefined && el.clonemupKey) el.clonemupKey.value = config.clonemup_api_key || '';
   if (el.clonemupProductId) el.clonemupProductId.value = Math.max(1, Number.parseInt(config.clonemup_hotmail_product_id ?? 7614, 10) || 7614);
   syncClonemupProductUi({ silentLegacyNormalization: true });
@@ -1417,7 +1415,6 @@ function getConfigPayload() {
     tinyhostDomain: el.tinyhostDomain?.value.trim().toLowerCase() || '',
     randomMailDomain: ['hotmail', 'gmail-shopgmail9999', 'tinyhost'].includes(selectedMailDomain) ? false : randomMailDomainChecked,
     headless: el.headless?.checked === true,
-    browserMinimize: el.headless?.checked === true ? false : el.browserMinimize?.checked === true,
     createPayUnlinkStage: el.createPayUnlinkStage?.value || 'stage1',
     createPayUnlinkDryRun: el.mode?.value === 'create_pay_unlink' ? false : el.createPayUnlinkSubmit?.checked !== true,
     createPayUnlinkAllowSubmit: el.mode?.value === 'create_pay_unlink' ? true : el.createPayUnlinkSubmit?.checked === true,
@@ -1710,7 +1707,6 @@ async function handleSaveConfig() {
       if (el.tinyhostDomain && result.config.tinyhost_domain !== undefined) el.tinyhostDomain.value = `${result.config.tinyhost_domain || ''}`;
       if (el.randomMailDomain) el.randomMailDomain.checked = result.config.random_mail_domain === true;
       if (el.headless && result.config.headless !== undefined) el.headless.checked = result.config.headless === true;
-      if (el.browserMinimize && result.config.browser_minimize !== undefined) el.browserMinimize.checked = result.config.browser_minimize === true && result.config.headless !== true;
       if (el.proxyRoundRobin) el.proxyRoundRobin.checked = result.config.proxy_round_robin === true;
       if (el.proxyApplyRotate) el.proxyApplyRotate.checked = result.config.proxy_apply_rotate === true;
       if (el.proxySticky) el.proxySticky.value = Math.max(1, Number.parseInt(result.config.proxy_sticky, 10) || 1);
@@ -1892,19 +1888,6 @@ function bindEvents() {
     if (el.mailDomain) el.mailDomain.disabled = enabled || (el.randomMailDomain?.checked === true);
   };
   window.applyCreatePayUnlinkUi = applyCreatePayUnlinkUi;
-
-  const syncBrowserVisibilityMode = (source = '') => {
-    if (source === 'headless' && el.headless?.checked === true && el.browserMinimize) {
-      el.browserMinimize.checked = false;
-      pushLog('[Browser] Headless và Minimize không bật cùng lúc. Đã tắt Minimize.');
-    }
-    if (source === 'minimize' && el.browserMinimize?.checked === true && el.headless) {
-      el.headless.checked = false;
-      pushLog('[Browser] Minimize và Headless không bật cùng lúc. Đã tắt Headless.');
-    }
-  };
-  el.headless?.addEventListener('change', () => syncBrowserVisibilityMode('headless'));
-  el.browserMinimize?.addEventListener('change', () => syncBrowserVisibilityMode('minimize'));
 
   el.mode?.addEventListener('change', applyCreatePayUnlinkUi);
   el.verifyProviderSwitch?.addEventListener('click', (event) => {

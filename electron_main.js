@@ -1254,59 +1254,33 @@ function stopCliProxyApiCapture(captureProcess) {
   }
 }
 
-function patchPlaywrightLaunchVisibility({ headless = false, minimize = false } = {}) {
+function patchPlaywrightLaunchVisibility({ headless = false } = {}) {
   globalThis.__codexBrowserHeadless = headless === true;
-  globalThis.__codexBrowserStartMinimized = headless !== true && minimize === true;
 
-  const minimizeBrowserWindowsSoon = (label = 'browser') => {
-    if (process.platform !== 'win32' || globalThis.__codexBrowserStartMinimized !== true) return;
-    const command = 'powershell -NoProfile -ExecutionPolicy Bypass -Command "$code = @\'\nusing System;\nusing System.Text;\nusing System.Runtime.InteropServices;\npublic class WinMin {\n  public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);\n  [DllImport(\"user32.dll\")] public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);\n  [DllImport(\"user32.dll\")] public static extern bool IsWindowVisible(IntPtr hWnd);\n  [DllImport(\"user32.dll\")] public static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int count);\n  [DllImport(\"user32.dll\")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);\n  public static void Run() {\n    EnumWindows((hWnd, lParam) => {\n      if (!IsWindowVisible(hWnd)) return true;\n      var sb = new StringBuilder(512);\n      GetWindowText(hWnd, sb, sb.Capacity);\n      var title = sb.ToString();\n      if (title.Contains(\"ChatGPT\") || title.Contains(\"OpenAI\") || title.Contains(\"auth.openai.com\")) ShowWindowAsync(hWnd, 6);\n      return true;\n    }, IntPtr.Zero);\n  }\n}\n\'@; Add-Type $code; for ($i=0; $i -lt 20; $i++) { [WinMin]::Run(); Start-Sleep -Milliseconds 250 }"';
-    const child = spawn(command, { shell: true, windowsHide: true, stdio: 'ignore' });
-    child.once('error', (error) => sendToRenderer('log:line', { line: `[Browser] Không minimize được ${label}: ${error.message}` }));
-    child.unref?.();
-  };
-
-  const buildLaunchOptions = (options = {}) => {
-    const forceHeadless = globalThis.__codexBrowserHeadless === true;
-    const startMinimized = globalThis.__codexBrowserStartMinimized === true;
-    const currentArgs = [].concat(options?.args || []);
-    const minimizedArgs = startMinimized
-      ? [
-        '--start-minimized',
-        '--window-position=-32000,-32000',
-        '--disable-features=CalculateNativeWinOcclusion',
-      ]
-      : [];
-    return {
-      ...options,
-      headless: forceHeadless ? true : false,
-      args: [...new Set([...currentArgs, ...minimizedArgs])],
-    };
-  };
+  const buildLaunchOptions = (options = {}) => ({
+    ...options,
+    headless: globalThis.__codexBrowserHeadless === true ? true : false,
+  });
 
   const patchLaunch = (browserType, label = 'browser') => {
     if (!browserType || browserType.__codexLaunchVisibilityPatched) return;
 
     if (typeof browserType.launchPersistentContext === 'function') {
       const originalLaunchPersistentContext = browserType.launchPersistentContext;
-      browserType.launchPersistentContext = async function patchedLaunchPersistentContext(userDataDir, options = {}) {
-        const context = await originalLaunchPersistentContext.call(this, userDataDir, buildLaunchOptions(options));
-        minimizeBrowserWindowsSoon(label);
-        return context;
+      browserType.launchPersistentContext = function patchedLaunchPersistentContext(userDataDir, options = {}) {
+        return originalLaunchPersistentContext.call(this, userDataDir, buildLaunchOptions(options));
       };
     }
 
     if (typeof browserType.launch === 'function') {
       const originalLaunch = browserType.launch;
-      browserType.launch = async function patchedLaunch(options = {}) {
-        const browser = await originalLaunch.call(this, buildLaunchOptions(options));
-        minimizeBrowserWindowsSoon(label);
-        return browser;
+      browserType.launch = function patchedLaunch(options = {}) {
+        return originalLaunch.call(this, buildLaunchOptions(options));
       };
     }
 
     browserType.__codexLaunchVisibilityPatched = true;
-    sendToRenderer('log:line', { line: `[Browser] Đã patch ${label}: Headless ẩn hoàn toàn hoặc Minimize thu nhỏ ngay theo checkbox.` });
+    sendToRenderer('log:line', { line: `[Browser] Đã patch ${label}: chỉ dùng Headless khi bật checkbox.` });
   };
 
   try {
@@ -1344,7 +1318,6 @@ function normalizeConfigPatch(payload = {}) {
     selected_mail_domain: keepLowerString(payload?.selectedMailDomain, current.selected_mail_domain, 'thangterter.online'),
     random_mail_domain: payload?.randomMailDomain === true,
     headless: payload?.headless === true,
-    browser_minimize: payload?.headless === true ? false : payload?.browserMinimize === true,
     tinyhost_domain: keepLowerString(payload?.tinyhostDomain, current.tinyhost_domain, 'tinyhost.shop'),
     router_password: keepString(payload?.routerPassword, current.router_password, '123456'),
     proxy_round_robin: payload?.proxyRoundRobin === true,
@@ -1494,7 +1467,6 @@ ipcMain.handle('run:start', async (_event, payload) => {
   const randomMailDomain = isCreatePayUnlinkMode ? false : payload?.randomMailDomain === true;
   const tinyhostDomain = `${payload?.tinyhostDomain || savedConfig.tinyhost_domain || 'tinyhost.shop'}`.trim().toLowerCase();
   const headless = payload?.headless === true;
-  const browserMinimize = headless ? false : payload?.browserMinimize === true;
   const shopgmail9999ApiKey = `${payload?.shopgmail9999ApiKey || ''}`.trim();
   const clonemupApiKey = `${payload?.clonemupApiKey || savedConfig.clonemup_api_key || ''}`.trim();
   const createPayUnlinkStage = `${payload?.createPayUnlinkStage || 'stage1'}`.trim().toLowerCase();
@@ -1991,7 +1963,7 @@ ipcMain.handle('run:start', async (_event, payload) => {
   }
   persistWorkspaceConfig(normalizeConfigPatch(configPayload));
   MailOtpService.TINYHOST_SELECTED_DOMAIN = tinyhostDomain;
-  patchPlaywrightLaunchVisibility({ headless, minimize: browserMinimize });
+  patchPlaywrightLaunchVisibility({ headless });
 
   const nextPreflight = refreshPreflightState();
   if (!nextPreflight.canRun) {
@@ -2052,7 +2024,6 @@ ipcMain.handle('run:start', async (_event, payload) => {
     selectedMailDomain,
     randomMailDomain,
     headless,
-    browserMinimize,
     tinyhostDomain,
     shopgmail9999ApiKey,
     clonemupApiKey,
