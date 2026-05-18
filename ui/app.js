@@ -55,6 +55,7 @@ const el = {
   mailDomain: document.getElementById('mail-domain-select'),
   randomMailDomain: document.getElementById('random-mail-domain-input'),
   tinyhostDomain: document.getElementById('tinyhost-domain-input'),
+  headless: document.getElementById('headless-input'),
   count: document.getElementById('count-input'),
   mode: document.getElementById('mode-select'),
   runtimeConfigCard: document.querySelector('.runtime-config-card'),
@@ -875,6 +876,7 @@ function renderRuntimeConfig(config = {}) {
   if (config.selected_mail_domain !== undefined) el.mailDomain.value = config.selected_mail_domain || el.mailDomain.value;
   if (el.tinyhostDomain && config.tinyhost_domain !== undefined) el.tinyhostDomain.value = config.tinyhost_domain || '';
   if (el.randomMailDomain && config.random_mail_domain !== undefined) el.randomMailDomain.checked = config.random_mail_domain === true;
+  if (el.headless && config.headless !== undefined) el.headless.checked = config.headless === true;
   if (config.clonemup_api_key !== undefined && el.clonemupKey) el.clonemupKey.value = config.clonemup_api_key || '';
   if (el.clonemupProductId) el.clonemupProductId.value = Math.max(1, Number.parseInt(config.clonemup_hotmail_product_id ?? 7614, 10) || 7614);
   syncClonemupProductUi({ silentLegacyNormalization: true });
@@ -1412,6 +1414,7 @@ function getConfigPayload() {
     selectedMailDomain,
     tinyhostDomain: el.tinyhostDomain?.value.trim().toLowerCase() || '',
     randomMailDomain: ['hotmail', 'gmail-shopgmail9999', 'tinyhost'].includes(selectedMailDomain) ? false : randomMailDomainChecked,
+    headless: el.headless?.checked === true,
     createPayUnlinkStage: el.createPayUnlinkStage?.value || 'stage1',
     createPayUnlinkDryRun: el.mode?.value === 'create_pay_unlink' ? false : el.createPayUnlinkSubmit?.checked !== true,
     createPayUnlinkAllowSubmit: el.mode?.value === 'create_pay_unlink' ? true : el.createPayUnlinkSubmit?.checked === true,
@@ -1703,6 +1706,7 @@ async function handleSaveConfig() {
       el.mailDomain.value = `${result.config.selected_mail_domain || 'thangterter.online'}`;
       if (el.tinyhostDomain && result.config.tinyhost_domain !== undefined) el.tinyhostDomain.value = `${result.config.tinyhost_domain || ''}`;
       if (el.randomMailDomain) el.randomMailDomain.checked = result.config.random_mail_domain === true;
+      if (el.headless && result.config.headless !== undefined) el.headless.checked = result.config.headless === true;
       if (el.proxyRoundRobin) el.proxyRoundRobin.checked = result.config.proxy_round_robin === true;
       if (el.proxyApplyRotate) el.proxyApplyRotate.checked = result.config.proxy_apply_rotate === true;
       if (el.proxySticky) el.proxySticky.value = Math.max(1, Number.parseInt(result.config.proxy_sticky, 10) || 1);

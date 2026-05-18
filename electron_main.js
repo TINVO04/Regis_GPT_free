@@ -1272,6 +1272,7 @@ function normalizeConfigPatch(payload = {}) {
     password: keepString(payload?.password, current.password, '@1234567890a'),
     selected_mail_domain: keepLowerString(payload?.selectedMailDomain, current.selected_mail_domain, 'thangterter.online'),
     random_mail_domain: payload?.randomMailDomain === true,
+    headless: payload?.headless === true,
     tinyhost_domain: keepLowerString(payload?.tinyhostDomain, current.tinyhost_domain, 'tinyhost.shop'),
     router_password: keepString(payload?.routerPassword, current.router_password, '123456'),
     proxy_round_robin: payload?.proxyRoundRobin === true,
@@ -1420,6 +1421,7 @@ ipcMain.handle('run:start', async (_event, payload) => {
   const selectedMailDomain = isCreatePayUnlinkMode ? 'gmail-shopgmail9999' : `${payload?.selectedMailDomain || ''}`.trim().toLowerCase();
   const randomMailDomain = isCreatePayUnlinkMode ? false : payload?.randomMailDomain === true;
   const tinyhostDomain = `${payload?.tinyhostDomain || savedConfig.tinyhost_domain || 'tinyhost.shop'}`.trim().toLowerCase();
+  const headless = payload?.headless === true;
   const shopgmail9999ApiKey = `${payload?.shopgmail9999ApiKey || ''}`.trim();
   const clonemupApiKey = `${payload?.clonemupApiKey || savedConfig.clonemup_api_key || ''}`.trim();
   const createPayUnlinkStage = `${payload?.createPayUnlinkStage || 'stage1'}`.trim().toLowerCase();
@@ -1975,6 +1977,7 @@ ipcMain.handle('run:start', async (_event, payload) => {
     routerPassword,
     selectedMailDomain,
     randomMailDomain,
+    headless,
     tinyhostDomain,
     shopgmail9999ApiKey,
     clonemupApiKey,
