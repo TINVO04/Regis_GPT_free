@@ -1621,10 +1621,16 @@ ipcMain.handle('run:start', async (_event, payload) => {
   const cplTestCardCvc = `${payload?.cplTestCardCvc || process.env.CPL_TEST_CARD_CVC || savedConfig.cpl_test_card_cvc || ''}`.trim();
   const verifyProvider = normalizeVerifyProvider(payload?.verifyProvider || savedConfig.verify_provider || '9router');
   const cliProxyApiCommand = buildCliProxyApiCommand(payload, savedConfig);
+  const isKhommoHotmailRun = (mode === 'create' || mode === 'create_verify') && selectedMailDomain === 'hotmail-khommo';
+  const khommoNeededStatus = mode === 'create_verify' ? 'pending' : 'mail_ready';
+  const khommoProductId = [7511, 6000].includes(Number.parseInt(payload?.khommoHotmailProductId ?? savedConfig.khommo_hotmail_product_id ?? 7511, 10))
+    ? Number.parseInt(payload?.khommoHotmailProductId ?? savedConfig.khommo_hotmail_product_id ?? 7511, 10)
+    : 7511;
   let cliProxyApiAuthUrl = '';
   let cliProxyApiCaptureProcess = null;
   const needsVerifyProvider = mode === 'verify' || mode === 'create_verify' || (isCreatePayUnlinkMode && createPayUnlinkStage === 'stage4');
   const shouldPreCaptureCliProxyApi = mode === 'verify' || (isCreatePayUnlinkMode && createPayUnlinkStage === 'stage4');
+  const shouldRunOneAccountPerSession = isKhommoHotmailRun || (needsVerifyProvider && verifyProvider === 'cliproxyapi');
 
   if (Number.isNaN(count) || count <= 0) {
     return { ok: false, message: 'Số lượng phải lớn hơn 0.' };
@@ -2359,37 +2365,37 @@ ipcMain.handle('run:start', async (_event, payload) => {
   persistWorkspaceConfig(normalizeConfigPatch(configPayload));
   patchPlaywrightLaunchVisibility({ headless });
 
-  if ((mode === 'create' || mode === 'create_verify') && selectedMailDomain === 'hotmail-khommo') {
+  const ensureOneKhommoHotmailForSession = async (accountIndex = 1) => {
+    if (!isKhommoHotmailRun) return { ok: true, purchased: false };
     const repo = getHotmailRepository();
-    const readyCount = repo.getReadyMailAccounts().length;
-    const pendingCount = repo.getPendingAccounts().length;
-    const neededStatus = mode === 'create_verify' ? 'pending' : 'mail_ready';
-    const availableCount = mode === 'create_verify' ? pendingCount : readyCount;
-    const missingCount = Math.max(0, count - availableCount);
-    if (missingCount > 0) {
-      const khommoProductId = [7511, 6000].includes(Number.parseInt(payload?.khommoHotmailProductId ?? savedConfig.khommo_hotmail_product_id ?? 7511, 10))
-        ? Number.parseInt(payload?.khommoHotmailProductId ?? savedConfig.khommo_hotmail_product_id ?? 7511, 10)
-        : 7511;
-      try {
-        const purchased = await buyKhommoHotmailForRun({
-          apiKey: clonemupApiKey,
-          amount: missingCount,
-          productId: khommoProductId,
-          reason: `RUN ${mode}`,
-          status: neededStatus,
-        });
-        if (purchased.added.length < missingCount) {
-          stopCliProxyApiCapture(cliProxyApiCaptureProcess);
-          return { ok: false, message: `Khommo chỉ mua được ${purchased.added.length}/${missingCount} Hotmail cần thêm cho status=${neededStatus}.`, ...readWorkspaceData() };
-        }
-        if (mode === 'create_verify') {
-          sendToRenderer('log:line', { line: `[Khommo] RUN create_verify đang cần account pending để verify. Đã mua mail mới và set pending để core không lấy email cũ trong accounts.txt.` });
-        }
-      } catch (error) {
-        stopCliProxyApiCapture(cliProxyApiCaptureProcess);
-        return { ok: false, message: error.message || 'Không tự mua được Hotmail Khommo trước khi RUN.', ...readWorkspaceData() };
-      }
+    const availableCount = mode === 'create_verify'
+      ? repo.getPendingAccounts().length
+      : repo.getReadyMailAccounts().length;
+    if (availableCount > 0) {
+      sendToRenderer('log:line', { line: `[Khommo] Account ${accountIndex}/${count}: còn ${availableCount} Hotmail status=${khommoNeededStatus}, không mua thêm trước.` });
+      return { ok: true, purchased: false };
     }
+
+    try {
+      const purchased = await buyKhommoHotmailForRun({
+        apiKey: clonemupApiKey,
+        amount: 1,
+        productId: khommoProductId,
+        reason: `RUN ${mode} account ${accountIndex}/${count}`,
+        status: khommoNeededStatus,
+      });
+      if (purchased.added.length < 1) {
+        return { ok: false, message: `Khommo không mua được Hotmail cho account ${accountIndex}/${count} status=${khommoNeededStatus}.`, ...readWorkspaceData() };
+      }
+      sendToRenderer('log:line', { line: `[Khommo] Account ${accountIndex}/${count}: đã mua đúng 1 Hotmail mới status=${khommoNeededStatus}. Hư mail nào thì phiên sau mới mua bù mail đó.` });
+      return { ok: true, purchased: true };
+    } catch (error) {
+      return { ok: false, message: error.message || 'Không tự mua được Hotmail Khommo trước khi RUN.', ...readWorkspaceData() };
+    }
+  };
+
+  if (isKhommoHotmailRun) {
+    sendToRenderer('log:line', { line: `[Khommo] RUN ${mode}: bật chế độ mỗi phiên/account chỉ đảm bảo 1 Hotmail status=${khommoNeededStatus}; không mua batch ${count} mail trước khi chạy.` });
   }
 
   const nextPreflight = refreshPreflightState();
@@ -2495,7 +2501,7 @@ ipcMain.handle('run:start', async (_event, payload) => {
   };
 
   activeRun = (async () => {
-    if (!(needsVerifyProvider && verifyProvider === 'cliproxyapi')) {
+    if (!shouldRunOneAccountPerSession) {
       currentRuntimeProxyPool = await validateRuntimeProxyBeforeRun(pickProxyPoolsForRun(1)[0] || null, 1);
       return runCreator(buildRunOptions(count, 1));
     }
@@ -2510,8 +2516,17 @@ ipcMain.handle('run:start', async (_event, payload) => {
         await captureFreshCliProxyApiAuthUrl(`account ${accountIndex}`);
       }
 
+      const khommoReady = await ensureOneKhommoHotmailForSession(accountIndex);
+      if (!khommoReady.ok) {
+        throw new Error(khommoReady.message || `Không tự mua được Hotmail cho account ${accountIndex}/${count}.`);
+      }
+
       currentRuntimeProxyPool = await validateRuntimeProxyBeforeRun(pickProxyPoolsForRun(accountIndex)[0] || null, accountIndex);
-      sendToRenderer('log:line', { line: `[CLIProxyAPI] Verify account ${accountIndex}/${count} bằng OAuth URL mới.` });
+      if (needsVerifyProvider && verifyProvider === 'cliproxyapi') {
+        sendToRenderer('log:line', { line: `[CLIProxyAPI] Verify account ${accountIndex}/${count} bằng OAuth URL mới.` });
+      } else if (isKhommoHotmailRun) {
+        sendToRenderer('log:line', { line: `[Khommo] Chạy phiên account ${accountIndex}/${count} với tối đa 1 Hotmail khả dụng trong phiên này.` });
+      }
       latestSummary = await runCreator(buildRunOptions(1, accountIndex));
       totalSuccessful += Number.parseInt(latestSummary?.successful ?? 0, 10) || 0;
       totalFailed += Number.parseInt(latestSummary?.failed ?? 0, 10) || 0;
