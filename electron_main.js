@@ -1257,24 +1257,43 @@ function stopCliProxyApiCapture(captureProcess) {
 function patchPlaywrightLaunchVisibility({ headless = false } = {}) {
   globalThis.__codexBrowserHeadless = headless === true;
 
-  const forceHeadlessLaunch = (browserType, label = 'browser') => {
-    if (!browserType || browserType.__codexHeadlessLaunchPatched || typeof browserType.launchPersistentContext !== 'function') return;
-    const originalLaunchPersistentContext = browserType.launchPersistentContext;
-    browserType.launchPersistentContext = function patchedLaunchPersistentContext(userDataDir, options = {}) {
-      const forceHeadless = globalThis.__codexBrowserHeadless === true;
-      const currentArgs = [].concat(options?.args || []);
-      const hiddenArgs = forceHeadless
-        ? ['--window-position=-32000,-32000', '--start-minimized', '--disable-features=CalculateNativeWinOcclusion']
-        : [];
-      const nextOptions = {
-        ...options,
-        headless: forceHeadless ? true : options?.headless,
-        args: [...new Set([...currentArgs, ...hiddenArgs])],
-      };
-      return originalLaunchPersistentContext.call(this, userDataDir, nextOptions);
+  const buildLaunchOptions = (options = {}) => {
+    const forceHeadless = globalThis.__codexBrowserHeadless === true;
+    const currentArgs = [].concat(options?.args || []);
+    const hiddenArgs = forceHeadless
+      ? [
+        '--window-position=-32000,-32000',
+        '--start-minimized',
+        '--disable-features=CalculateNativeWinOcclusion',
+        '--no-startup-window',
+      ]
+      : [];
+    return {
+      ...options,
+      headless: forceHeadless ? true : options?.headless,
+      args: [...new Set([...currentArgs, ...hiddenArgs])],
     };
+  };
+
+  const forceHeadlessLaunch = (browserType, label = 'browser') => {
+    if (!browserType || browserType.__codexHeadlessLaunchPatched) return;
+
+    if (typeof browserType.launchPersistentContext === 'function') {
+      const originalLaunchPersistentContext = browserType.launchPersistentContext;
+      browserType.launchPersistentContext = function patchedLaunchPersistentContext(userDataDir, options = {}) {
+        return originalLaunchPersistentContext.call(this, userDataDir, buildLaunchOptions(options));
+      };
+    }
+
+    if (typeof browserType.launch === 'function') {
+      const originalLaunch = browserType.launch;
+      browserType.launch = function patchedLaunch(options = {}) {
+        return originalLaunch.call(this, buildLaunchOptions(options));
+      };
+    }
+
     browserType.__codexHeadlessLaunchPatched = true;
-    sendToRenderer('log:line', { line: `[Browser] Đã patch ${label} để có thể ép headless khi bật checkbox.` });
+    sendToRenderer('log:line', { line: `[Browser] Đã patch ${label} launch/launchPersistentContext để ép headless khi bật checkbox.` });
   };
 
   try {
