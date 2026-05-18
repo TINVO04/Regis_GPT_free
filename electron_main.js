@@ -9,6 +9,7 @@ import path from 'path';
 import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { runCreator, stopCreator, forceStopCreator, ChatGPTAccountCreatorCore } from './account_creator_core.js';
+import { MailOtpService } from './src/core/services/MailOtpService.js';
 import { HistoryStore } from './history_store.js';
 import {
   getBundledChromiumExecutablePath,
@@ -140,8 +141,9 @@ function ensureWorkspaceFiles(state) {
         router_password: '123456',
         selected_mail_domain: 'thangterter.online',
         random_mail_domain: false,
+        tinyhost_domain: 'tinyhost.shop',
         mail_domains: [
-          'tinyhost-random',
+          'tinyhost',
           'otpmail.online',
           'crossabc.site',
           '999ai.org',
@@ -1118,6 +1120,7 @@ function persistWorkspaceConfig(patch = {}) {
     mail_domains: [],
     selected_mail_domain: 'thangterter.online',
     random_mail_domain: false,
+    tinyhost_domain: 'tinyhost.shop',
     router_password: '123456',
     router_url: 'http://localhost:20128/dashboard/providers/codex',
     proxy_round_robin: false,
@@ -1269,6 +1272,7 @@ function normalizeConfigPatch(payload = {}) {
     password: keepString(payload?.password, current.password, '@1234567890a'),
     selected_mail_domain: keepLowerString(payload?.selectedMailDomain, current.selected_mail_domain, 'thangterter.online'),
     random_mail_domain: payload?.randomMailDomain === true,
+    tinyhost_domain: keepLowerString(payload?.tinyhostDomain, current.tinyhost_domain, 'tinyhost.shop'),
     router_password: keepString(payload?.routerPassword, current.router_password, '123456'),
     proxy_round_robin: payload?.proxyRoundRobin === true,
     proxy_apply_rotate: payload?.proxyApplyRotate === true,
@@ -1415,6 +1419,7 @@ ipcMain.handle('run:start', async (_event, payload) => {
   const isCreatePayUnlinkMode = mode === 'create_pay_unlink';
   const selectedMailDomain = isCreatePayUnlinkMode ? 'gmail-shopgmail9999' : `${payload?.selectedMailDomain || ''}`.trim().toLowerCase();
   const randomMailDomain = isCreatePayUnlinkMode ? false : payload?.randomMailDomain === true;
+  const tinyhostDomain = `${payload?.tinyhostDomain || savedConfig.tinyhost_domain || 'tinyhost.shop'}`.trim().toLowerCase();
   const shopgmail9999ApiKey = `${payload?.shopgmail9999ApiKey || ''}`.trim();
   const clonemupApiKey = `${payload?.clonemupApiKey || savedConfig.clonemup_api_key || ''}`.trim();
   const createPayUnlinkStage = `${payload?.createPayUnlinkStage || 'stage1'}`.trim().toLowerCase();
@@ -1886,6 +1891,11 @@ ipcMain.handle('run:start', async (_event, payload) => {
     return { ok: false, message: 'Domain Gmail - ShopGmail9999 cần ShopGmail9999 API key.' };
   }
 
+  if (selectedMailDomain === 'tinyhost' && !/^[^@\s]+\.[^@\s]+$/.test(tinyhostDomain)) {
+    stopCliProxyApiCapture(cliProxyApiCaptureProcess);
+    return { ok: false, message: 'Tinyhost cần domain hợp lệ. Hãy chọn Mail domain = Tinyhost và nhập Tinyhost domain, ví dụ tinyhost.shop.' };
+  }
+
   if (isCreatePayUnlinkMode && createPayUnlinkStage === 'stage2' && (!cplTestCardNumber || !cplTestCardExpiry || !cplTestCardCvc)) {
     stopCliProxyApiCapture(cliProxyApiCaptureProcess);
     return { ok: false, message: 'Mode 4 Stage 2 cần nhập card number, expiry, CVC trong UI hoặc cấu hình env CPL_TEST_CARD_NUMBER, CPL_TEST_CARD_EXPIRY, CPL_TEST_CARD_CVC.' };
@@ -1905,6 +1915,7 @@ ipcMain.handle('run:start', async (_event, payload) => {
     configPayload.cliProxyApiConfigPath = cliProxyApiCommand.configPath;
   }
   persistWorkspaceConfig(normalizeConfigPatch(configPayload));
+  MailOtpService.TINYHOST_SELECTED_DOMAIN = tinyhostDomain;
 
   const nextPreflight = refreshPreflightState();
   if (!nextPreflight.canRun) {
@@ -1964,6 +1975,7 @@ ipcMain.handle('run:start', async (_event, payload) => {
     routerPassword,
     selectedMailDomain,
     randomMailDomain,
+    tinyhostDomain,
     shopgmail9999ApiKey,
     clonemupApiKey,
     workspaceDir: workspaceState.workspaceDir,

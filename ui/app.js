@@ -54,6 +54,7 @@ const el = {
   verifyProviderNote: document.getElementById('verify-provider-note'),
   mailDomain: document.getElementById('mail-domain-select'),
   randomMailDomain: document.getElementById('random-mail-domain-input'),
+  tinyhostDomain: document.getElementById('tinyhost-domain-input'),
   count: document.getElementById('count-input'),
   mode: document.getElementById('mode-select'),
   runtimeConfigCard: document.querySelector('.runtime-config-card'),
@@ -872,6 +873,7 @@ function renderRuntimeConfig(config = {}) {
   if (el.cliProxyApiConfig) el.cliProxyApiConfig.value = config.cliproxyapi_config_path || '';
   updateVerifyProviderUi();
   if (config.selected_mail_domain !== undefined) el.mailDomain.value = config.selected_mail_domain || el.mailDomain.value;
+  if (el.tinyhostDomain && config.tinyhost_domain !== undefined) el.tinyhostDomain.value = config.tinyhost_domain || '';
   if (el.randomMailDomain && config.random_mail_domain !== undefined) el.randomMailDomain.checked = config.random_mail_domain === true;
   if (config.clonemup_api_key !== undefined && el.clonemupKey) el.clonemupKey.value = config.clonemup_api_key || '';
   if (el.clonemupProductId) el.clonemupProductId.value = Math.max(1, Number.parseInt(config.clonemup_hotmail_product_id ?? 7614, 10) || 7614);
@@ -1408,7 +1410,8 @@ function getConfigPayload() {
     cliProxyApiExecutablePath: el.cliProxyApiExecutable?.value.trim() || '',
     cliProxyApiConfigPath: el.cliProxyApiConfig?.value.trim() || '',
     selectedMailDomain,
-    randomMailDomain: ['hotmail', 'gmail-shopgmail9999'].includes(selectedMailDomain) ? false : randomMailDomainChecked,
+    tinyhostDomain: el.tinyhostDomain?.value.trim().toLowerCase() || '',
+    randomMailDomain: ['hotmail', 'gmail-shopgmail9999', 'tinyhost'].includes(selectedMailDomain) ? false : randomMailDomainChecked,
     createPayUnlinkStage: el.createPayUnlinkStage?.value || 'stage1',
     createPayUnlinkDryRun: el.mode?.value === 'create_pay_unlink' ? false : el.createPayUnlinkSubmit?.checked !== true,
     createPayUnlinkAllowSubmit: el.mode?.value === 'create_pay_unlink' ? true : el.createPayUnlinkSubmit?.checked === true,
@@ -1427,7 +1430,7 @@ function getConfigPayload() {
 function validateBeforeRun() {
   const mode = el.mode.value;
   const count = Number.parseInt(el.count.value, 10);
-  const { smspoolKey, password, routerPassword, selectedMailDomain, randomMailDomain, shopgmail9999ApiKey, cplTestCardNumber, cplTestCardExpiry, cplTestCardCvc, verifyProvider } = getConfigPayload();
+  const { smspoolKey, password, routerPassword, selectedMailDomain, randomMailDomain, tinyhostDomain, shopgmail9999ApiKey, cplTestCardNumber, cplTestCardExpiry, cplTestCardCvc, verifyProvider } = getConfigPayload();
 
   if (!authState.authenticated) {
     pushLog('[UI] Bạn chưa đăng nhập');
@@ -1459,6 +1462,11 @@ function validateBeforeRun() {
 
   if (mode === 'create_pay_unlink' && el.createPayUnlinkStage?.value === 'stage1' && !shopgmail9999ApiKey) {
     pushLog('[UI] Mode 4 Stage 1 cần ShopGmail9999 API key cho Gmail session');
+    return null;
+  }
+
+  if (selectedMailDomain === 'tinyhost' && !/^[^@\s]+\.[^@\s]+$/.test(tinyhostDomain)) {
+    pushLog('[Tinyhost] Cần nhập Tinyhost domain hợp lệ, ví dụ tinyhost.shop hoặc domain bạn chọn trên Tinyhost.');
     return null;
   }
 
@@ -1693,6 +1701,7 @@ async function handleSaveConfig() {
       el.password.value = `${result.config.password || ''}`;
       el.routerPassword.value = `${result.config.router_password || '123456'}`;
       el.mailDomain.value = `${result.config.selected_mail_domain || 'thangterter.online'}`;
+      if (el.tinyhostDomain && result.config.tinyhost_domain !== undefined) el.tinyhostDomain.value = `${result.config.tinyhost_domain || ''}`;
       if (el.randomMailDomain) el.randomMailDomain.checked = result.config.random_mail_domain === true;
       if (el.proxyRoundRobin) el.proxyRoundRobin.checked = result.config.proxy_round_robin === true;
       if (el.proxyApplyRotate) el.proxyApplyRotate.checked = result.config.proxy_apply_rotate === true;
@@ -1896,6 +1905,15 @@ function bindEvents() {
     }
     applyCreatePayUnlinkUi();
   });
+  el.mailDomain?.addEventListener('change', () => {
+    const selected = el.mailDomain.value.trim();
+    if (selected === 'tinyhost') {
+      if (el.randomMailDomain) el.randomMailDomain.checked = false;
+      pushLog('[Tinyhost] Đã chọn Tinyhost. Nhập domain Tinyhost riêng bên dưới, app chỉ random username dưới domain đó.');
+    }
+    if (el.mailDomain) el.mailDomain.disabled = el.mode?.value === 'create_pay_unlink' || (el.randomMailDomain?.checked === true);
+  });
+
   el.randomMailDomain?.addEventListener('change', () => {
     if (el.mode?.value === 'create_pay_unlink') {
       el.randomMailDomain.checked = false;
