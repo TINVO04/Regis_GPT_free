@@ -199,7 +199,6 @@
                   <option value="cutongman.online">cutongman.online - free</option>
                   <option value="nguyenvantruong.io.vn">nguyenvantruong.io.vn - free</option>
                   <option value="thangterter.online" selected>thangterter.online - free</option>
-                  <option value="tinyhost">Tinyhost - chọn domain riêng</option>
                   <option value="mail1h.com">mail1h.com (mail1h) - free</option>
                   <option value="edumail.ovh">edumail.ovh (edumail) - free</option>
                   <option value="hotmail">hotmail (clonemup) - paid</option>
@@ -253,26 +252,6 @@
                   <button id="sms-balance-check-button" class="btn btn-ghost btn-sm" type="button">Check</button>
                   <button id="smspool-open-button" class="btn btn-ghost btn-sm" type="button">Mở web</button>
                 </div>
-              </div>
-
-              <label class="field field-wide" for="tinyhost-domain-input">
-                <span>Tinyhost domain</span>
-                <input id="tinyhost-domain-input" type="text" list="tinyhost-domain-list"
-                  placeholder="VD: tinyhost.shop hoặc domain Tinyhost bạn chọn" autocomplete="off" />
-                <datalist id="tinyhost-domain-list">
-                  <option value="tinyhost.shop"></option>
-                  <option value="tuyenchau.online"></option>
-                  <option value="kam.ono.biz.id"></option>
-                  <option value="duckyoursick.com"></option>
-                  <option value="huynhlx.shop"></option>
-                  <option value="toni.io.vn"></option>
-                </datalist>
-              </label>
-
-              <div class="product-note field-wide" id="tinyhost-domain-note" role="note">
-                <strong>Tinyhost</strong>
-                <span>Chọn Mail domain = Tinyhost, nhập domain muốn dùng ở đây. App sẽ random username dạng
-                  gptxxxxx@domain-đã-chọn, không random domain lung tung nữa.</span>
               </div>
 
               <label class="field field-wide" for="shopgmail9999-key-input">
@@ -335,6 +314,39 @@
                 <span>email|password|refreshToken|clientId|recoveryEmail|status • status tự set mail_ready nếu chưa
                   có.</span>
               </div>
+
+              <label class="field field-wide" for="khommo-key-input">
+                <span>Khommo API Key</span>
+                <input id="khommo-key-input" type="password" placeholder="Nhập API key mua Hotmail Khommo"
+                  autocomplete="off" />
+              </label>
+
+              <div class="sms-balance-card hotmail-balance-card field-wide" id="khommo-balance-card"
+                aria-live="polite">
+                <div class="sms-balance-copy">
+                  <span class="eyebrow">Khommo / Hotmail</span>
+                  <strong id="khommo-balance-value">Chưa kiểm tra VNĐ</strong>
+                  <small id="khommo-balance-meta">Nguồn mua Hotmail phụ, lưu chung vào accounts-hotmail.txt.</small>
+                  <small class="service-price-note" id="khommo-product-price-note">Nhập product Hotmail theo Khommo</small>
+                </div>
+                <div class="service-actions">
+                  <button id="khommo-balance-check-button" class="btn btn-ghost btn-sm" type="button">Check</button>
+                  <button id="khommo-open-button" class="btn btn-ghost btn-sm" type="button">Mở web</button>
+                </div>
+              </div>
+
+              <label class="field" for="khommo-product-id-input">
+                <span>Khommo Hotmail product</span>
+                <input id="khommo-product-id-input" type="number" min="1" value="1" />
+              </label>
+
+              <label class="field" for="hotmail-buy-provider-select">
+                <span>Nguồn mua Hotmail</span>
+                <select id="hotmail-buy-provider-select">
+                  <option value="clonemup" selected>Clonemup</option>
+                  <option value="khommo">Khommo</option>
+                </select>
+              </label>
 
               <label class="field" for="hotmail-buy-amount-input">
                 <span>Số Hotmail cần mua</span>

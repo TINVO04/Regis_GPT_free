@@ -31,6 +31,15 @@ const el = {
   clonemupProductId: document.getElementById('clonemup-product-id-input'),
   clonemupProductPriceNote: document.getElementById('clonemup-product-price-note'),
   clonemupOpenBtn: document.getElementById('clonemup-open-button'),
+  khommoKey: document.getElementById('khommo-key-input'),
+  khommoBalanceCard: document.getElementById('khommo-balance-card'),
+  khommoBalanceValue: document.getElementById('khommo-balance-value'),
+  khommoBalanceMeta: document.getElementById('khommo-balance-meta'),
+  khommoBalanceCheckBtn: document.getElementById('khommo-balance-check-button'),
+  khommoProductId: document.getElementById('khommo-product-id-input'),
+  khommoProductPriceNote: document.getElementById('khommo-product-price-note'),
+  khommoOpenBtn: document.getElementById('khommo-open-button'),
+  hotmailBuyProvider: document.getElementById('hotmail-buy-provider-select'),
   shopgmail9999Key: document.getElementById('shopgmail9999-key-input'),
   shopgmail9999BalanceCard: document.getElementById('shopgmail9999-balance-card'),
   shopgmail9999BalanceValue: document.getElementById('shopgmail9999-balance-value'),
@@ -54,7 +63,6 @@ const el = {
   verifyProviderNote: document.getElementById('verify-provider-note'),
   mailDomain: document.getElementById('mail-domain-select'),
   randomMailDomain: document.getElementById('random-mail-domain-input'),
-  tinyhostDomain: document.getElementById('tinyhost-domain-input'),
   headless: document.getElementById('headless-input'),
   count: document.getElementById('count-input'),
   mode: document.getElementById('mode-select'),
@@ -223,6 +231,11 @@ function initRuntimeInputs() {
     el.clonemupOpenBtn,
     el.clonemupProductSelect,
     el.clonemupProductId,
+    el.khommoKey,
+    el.khommoBalanceCheckBtn,
+    el.khommoOpenBtn,
+    el.khommoProductId,
+    el.hotmailBuyProvider,
     el.shopgmail9999Key,
     el.shopgmail9999BalanceCheckBtn,
     el.shopgmail9999OpenBtn,
@@ -469,6 +482,13 @@ function syncClonemupProductUi(options = {}) {
     el.clonemupProductPriceNote.textContent = activeProduct === 7614
       ? 'Product 7614 • 297đ / hotmail'
       : `Product ${activeProduct} • kiểm tra giá trên Clonemup`;
+  }
+}
+
+function syncKhommoProductUi() {
+  const productId = Math.max(1, Number.parseInt(el.khommoProductId?.value || '1', 10) || 1);
+  if (el.khommoProductPriceNote) {
+    el.khommoProductPriceNote.textContent = `Product ${productId} • kiểm tra giá trên Khommo`;
   }
 }
 
@@ -735,6 +755,38 @@ function setClonemupBalanceState({ status = 'idle', balance = '', message = '', 
   if (el.clonemupBalanceCheckBtn) el.clonemupBalanceCheckBtn.disabled = !authState.authenticated;
 }
 
+function setKhommoBalanceState({ status = 'idle', balance = '', message = '', checkedAt = '', runnableCount = null } = {}) {
+  if (!el.khommoBalanceCard) return;
+  el.khommoBalanceCard.classList.remove('is-idle', 'is-loading', 'is-success', 'is-error');
+  el.khommoBalanceCard.classList.add(`is-${status}`);
+  if (runnableCount !== null && el.hotmailRunnableCount) el.hotmailRunnableCount.textContent = `${runnableCount}`;
+
+  if (status === 'loading') {
+    el.khommoBalanceValue.textContent = 'Đang kiểm tra...';
+    el.khommoBalanceMeta.textContent = 'Đang gọi Khommo API.';
+    if (el.khommoBalanceCheckBtn) el.khommoBalanceCheckBtn.disabled = true;
+    return;
+  }
+
+  if (status === 'success') {
+    el.khommoBalanceValue.textContent = balance ? `${balance} VNĐ` : 'OK';
+    el.khommoBalanceMeta.textContent = checkedAt ? `Cập nhật: ${formatIsoDate(checkedAt)}` : 'Đã cập nhật.';
+    if (el.khommoBalanceCheckBtn) el.khommoBalanceCheckBtn.disabled = !authState.authenticated;
+    return;
+  }
+
+  if (status === 'error') {
+    el.khommoBalanceValue.textContent = 'Lỗi kiểm tra';
+    el.khommoBalanceMeta.textContent = message || 'Không kiểm tra được Khommo.';
+    if (el.khommoBalanceCheckBtn) el.khommoBalanceCheckBtn.disabled = !authState.authenticated;
+    return;
+  }
+
+  el.khommoBalanceValue.textContent = 'Chưa kiểm tra VNĐ';
+  el.khommoBalanceMeta.textContent = message || 'Nguồn mua Hotmail phụ, lưu chung vào accounts-hotmail.txt.';
+  if (el.khommoBalanceCheckBtn) el.khommoBalanceCheckBtn.disabled = !authState.authenticated;
+}
+
 function setShopGmail9999BalanceState({ status = 'idle', balance = '', stock = null, service = 'chatgpt', message = '', checkedAt = '' } = {}) {
   if (!el.shopgmail9999BalanceCard) return;
   el.shopgmail9999BalanceCard.classList.remove('is-idle', 'is-loading', 'is-success', 'is-error');
@@ -808,25 +860,56 @@ async function refreshClonemupProfile({ silent = false } = {}) {
   return result;
 }
 
+async function refreshKhommoProfile({ silent = false } = {}) {
+  const apiKey = el.khommoKey?.value.trim() || '';
+  if (!authState.authenticated) {
+    setKhommoBalanceState({ status: 'idle', message: 'Đăng nhập trước khi check số dư.' });
+    return null;
+  }
+  if (!apiKey) {
+    setKhommoBalanceState({ status: 'idle', message: 'Nhập Khommo API key để kiểm tra số dư.' });
+    if (!silent) pushLog('[Khommo] Thiếu API key');
+    return null;
+  }
+  setKhommoBalanceState({ status: 'loading' });
+  const result = await window.desktopAPI.getKhommoProfile({ apiKey });
+  if (!result.ok) {
+    setKhommoBalanceState({ status: 'error', message: result.message || 'Không kiểm tra được số dư.' });
+    if (!silent) pushLog(`[Khommo] Balance lỗi: ${result.message || 'Unknown error'}`);
+    return null;
+  }
+  setKhommoBalanceState({ status: 'success', balance: result.balance, checkedAt: result.checkedAt, runnableCount: result.hotmailRunnableCount });
+  if (!silent) pushLog(`[Khommo] Balance: ${result.balance || 'OK'} • Hotmail RUN=${result.hotmailRunnableCount ?? 0}`);
+  return result;
+}
+
 async function buyHotmailAccounts() {
-  const apiKey = el.clonemupKey.value.trim();
+  const provider = `${el.hotmailBuyProvider?.value || 'clonemup'}`.trim().toLowerCase();
+  const isKhommo = provider === 'khommo';
+  const apiKey = isKhommo ? (el.khommoKey?.value.trim() || '') : el.clonemupKey.value.trim();
   const amount = Math.max(1, Number.parseInt(el.hotmailBuyAmount.value, 10) || 0);
-  if (!apiKey) return pushLog('[Clonemup] Thiếu API key để mua Hotmail');
-  if (!amount) return pushLog('[Clonemup] Số lượng mua phải > 0');
-  const productId = Math.max(1, Number.parseInt(el.clonemupProductId?.value || '7614', 10) || 7614);
+  const label = isKhommo ? 'Khommo' : 'Clonemup';
+  if (!apiKey) return pushLog(`[${label}] Thiếu API key để mua Hotmail`);
+  if (!amount) return pushLog(`[${label}] Số lượng mua phải > 0`);
+  const productId = isKhommo
+    ? Math.max(1, Number.parseInt(el.khommoProductId?.value || '1', 10) || 1)
+    : Math.max(1, Number.parseInt(el.clonemupProductId?.value || '7614', 10) || 7614);
   el.hotmailBuyBtn.disabled = true;
-  pushLog(`[Clonemup] Đang mua ${amount} Hotmail product=${productId} (297đ/acc nếu product 7614)...`);
-  const result = await window.desktopAPI.buyHotmailAccounts({ apiKey, amount, productId });
+  pushLog(`[${label}] Đang mua ${amount} Hotmail product=${productId}...`);
+  const result = isKhommo
+    ? await window.desktopAPI.buyKhommoHotmailAccounts({ apiKey, amount, productId })
+    : await window.desktopAPI.buyHotmailAccounts({ apiKey, amount, productId });
   el.hotmailBuyBtn.disabled = currentRunStatus === 'running';
   if (!result.ok) {
-    pushLog(`[Clonemup] Mua lỗi: ${result.message || 'Unknown error'}`);
+    pushLog(`[${label}] Mua lỗi: ${result.message || 'Unknown error'}`);
     if (result.hotmailAccounts) renderHotmailAccounts(result.hotmailAccounts);
     return;
   }
-  pushLog(`[Clonemup] ${result.message || `Đã mua ${result.purchased || 0} Hotmail trắng`}`);
-  if (result.failedBatches?.length) pushLog(`[Clonemup] Dừng sau lỗi batch: ${result.failedBatches[0].message}`);
+  pushLog(`[${label}] ${result.message || `Đã mua ${result.purchased || 0} Hotmail trắng`}`);
+  if (result.failedBatches?.length) pushLog(`[${label}] Dừng sau lỗi batch: ${result.failedBatches[0].message}`);
   if (result.hotmailAccounts) renderHotmailAccounts(result.hotmailAccounts);
-  setClonemupBalanceState({ status: 'success', balance: result.balance, checkedAt: result.checkedAt, runnableCount: result.hotmailRunnableCount });
+  if (isKhommo) setKhommoBalanceState({ status: 'success', balance: result.balance, checkedAt: result.checkedAt, runnableCount: result.hotmailRunnableCount });
+  else setClonemupBalanceState({ status: 'success', balance: result.balance, checkedAt: result.checkedAt, runnableCount: result.hotmailRunnableCount });
 }
 
 async function importHotmailAccounts() {
@@ -874,12 +957,15 @@ function renderRuntimeConfig(config = {}) {
   if (el.cliProxyApiConfig) el.cliProxyApiConfig.value = config.cliproxyapi_config_path || '';
   updateVerifyProviderUi();
   if (config.selected_mail_domain !== undefined) el.mailDomain.value = config.selected_mail_domain || el.mailDomain.value;
-  if (el.tinyhostDomain && config.tinyhost_domain !== undefined) el.tinyhostDomain.value = config.tinyhost_domain || '';
   if (el.randomMailDomain && config.random_mail_domain !== undefined) el.randomMailDomain.checked = config.random_mail_domain === true;
   if (el.headless && config.headless !== undefined) el.headless.checked = config.headless === true;
   if (config.clonemup_api_key !== undefined && el.clonemupKey) el.clonemupKey.value = config.clonemup_api_key || '';
   if (el.clonemupProductId) el.clonemupProductId.value = Math.max(1, Number.parseInt(config.clonemup_hotmail_product_id ?? 7614, 10) || 7614);
   syncClonemupProductUi({ silentLegacyNormalization: true });
+  if (config.khommo_api_key !== undefined && el.khommoKey) el.khommoKey.value = config.khommo_api_key || '';
+  if (el.khommoProductId) el.khommoProductId.value = Math.max(1, Number.parseInt(config.khommo_hotmail_product_id ?? 1, 10) || 1);
+  if (el.hotmailBuyProvider && config.hotmail_buy_provider !== undefined) el.hotmailBuyProvider.value = `${config.hotmail_buy_provider || 'clonemup'}`;
+  syncKhommoProductUi();
   if (config.shopgmail9999_api_key !== undefined && el.shopgmail9999Key) el.shopgmail9999Key.value = config.shopgmail9999_api_key || '';
   if (el.proxyRoundRobin && config.proxy_round_robin !== undefined) el.proxyRoundRobin.checked = config.proxy_round_robin === true;
   if (el.proxyApplyRotate && config.proxy_apply_rotate !== undefined) el.proxyApplyRotate.checked = config.proxy_apply_rotate === true;
@@ -1404,6 +1490,9 @@ function getConfigPayload() {
     smspoolKey: el.smsKey.value.trim(),
     clonemupApiKey: el.clonemupKey?.value.trim() || '',
     clonemupHotmailProductId: Math.max(1, Number.parseInt(el.clonemupProductId?.value || '7614', 10) || 7614),
+    khommoApiKey: el.khommoKey?.value.trim() || '',
+    khommoHotmailProductId: Math.max(1, Number.parseInt(el.khommoProductId?.value || '1', 10) || 1),
+    hotmailBuyProvider: `${el.hotmailBuyProvider?.value || 'clonemup'}`.trim().toLowerCase(),
     shopgmail9999ApiKey: el.shopgmail9999Key?.value.trim() || '',
     password: el.password.value.trim(),
     routerPassword: el.routerPassword.value.trim(),
@@ -1412,8 +1501,7 @@ function getConfigPayload() {
     cliProxyApiExecutablePath: el.cliProxyApiExecutable?.value.trim() || '',
     cliProxyApiConfigPath: el.cliProxyApiConfig?.value.trim() || '',
     selectedMailDomain,
-    tinyhostDomain: el.tinyhostDomain?.value.trim().toLowerCase() || '',
-    randomMailDomain: ['hotmail', 'gmail-shopgmail9999', 'tinyhost'].includes(selectedMailDomain) ? false : randomMailDomainChecked,
+    randomMailDomain: ['hotmail', 'gmail-shopgmail9999'].includes(selectedMailDomain) ? false : randomMailDomainChecked,
     headless: el.headless?.checked === true,
     createPayUnlinkStage: el.createPayUnlinkStage?.value || 'stage1',
     createPayUnlinkDryRun: el.mode?.value === 'create_pay_unlink' ? false : el.createPayUnlinkSubmit?.checked !== true,
@@ -1433,7 +1521,7 @@ function getConfigPayload() {
 function validateBeforeRun() {
   const mode = el.mode.value;
   const count = Number.parseInt(el.count.value, 10);
-  const { smspoolKey, password, routerPassword, selectedMailDomain, randomMailDomain, tinyhostDomain, shopgmail9999ApiKey, cplTestCardNumber, cplTestCardExpiry, cplTestCardCvc, verifyProvider } = getConfigPayload();
+  const { smspoolKey, password, routerPassword, selectedMailDomain, randomMailDomain, shopgmail9999ApiKey, cplTestCardNumber, cplTestCardExpiry, cplTestCardCvc, verifyProvider } = getConfigPayload();
 
   if (!authState.authenticated) {
     pushLog('[UI] Bạn chưa đăng nhập');
@@ -1465,11 +1553,6 @@ function validateBeforeRun() {
 
   if (mode === 'create_pay_unlink' && el.createPayUnlinkStage?.value === 'stage1' && !shopgmail9999ApiKey) {
     pushLog('[UI] Mode 4 Stage 1 cần ShopGmail9999 API key cho Gmail session');
-    return null;
-  }
-
-  if (selectedMailDomain === 'tinyhost' && !/^[^@\s]+\.[^@\s]+$/.test(tinyhostDomain)) {
-    pushLog('[Tinyhost] Cần nhập Tinyhost domain hợp lệ, ví dụ tinyhost.shop hoặc domain bạn chọn trên Tinyhost.');
     return null;
   }
 
@@ -1704,7 +1787,6 @@ async function handleSaveConfig() {
       el.password.value = `${result.config.password || ''}`;
       el.routerPassword.value = `${result.config.router_password || '123456'}`;
       el.mailDomain.value = `${result.config.selected_mail_domain || 'thangterter.online'}`;
-      if (el.tinyhostDomain && result.config.tinyhost_domain !== undefined) el.tinyhostDomain.value = `${result.config.tinyhost_domain || ''}`;
       if (el.randomMailDomain) el.randomMailDomain.checked = result.config.random_mail_domain === true;
       if (el.headless && result.config.headless !== undefined) el.headless.checked = result.config.headless === true;
       if (el.proxyRoundRobin) el.proxyRoundRobin.checked = result.config.proxy_round_robin === true;
@@ -1721,6 +1803,10 @@ async function handleSaveConfig() {
       if (el.clonemupKey && result.config.clonemup_api_key !== undefined) el.clonemupKey.value = `${result.config.clonemup_api_key || ''}`;
       if (el.clonemupProductId && result.config.clonemup_hotmail_product_id !== undefined) el.clonemupProductId.value = Math.max(1, Number.parseInt(result.config.clonemup_hotmail_product_id, 10) || 7614);
       syncClonemupProductUi({ silentLegacyNormalization: true });
+      if (el.khommoKey && result.config.khommo_api_key !== undefined) el.khommoKey.value = `${result.config.khommo_api_key || ''}`;
+      if (el.khommoProductId && result.config.khommo_hotmail_product_id !== undefined) el.khommoProductId.value = Math.max(1, Number.parseInt(result.config.khommo_hotmail_product_id, 10) || 1);
+      if (el.hotmailBuyProvider && result.config.hotmail_buy_provider !== undefined) el.hotmailBuyProvider.value = `${result.config.hotmail_buy_provider || 'clonemup'}`;
+      syncKhommoProductUi();
       if (el.shopgmail9999Key && result.config.shopgmail9999_api_key !== undefined) el.shopgmail9999Key.value = `${result.config.shopgmail9999_api_key || ''}`;
       if (el.cplCardNumber && result.config.cpl_test_card_number !== undefined) el.cplCardNumber.value = `${result.config.cpl_test_card_number || ''}`;
       if (el.cplCardExpiry && result.config.cpl_test_card_expiry !== undefined) el.cplCardExpiry.value = `${result.config.cpl_test_card_expiry || ''}`;
@@ -1910,11 +1996,6 @@ function bindEvents() {
     applyCreatePayUnlinkUi();
   });
   el.mailDomain?.addEventListener('change', () => {
-    const selected = el.mailDomain.value.trim();
-    if (selected === 'tinyhost') {
-      if (el.randomMailDomain) el.randomMailDomain.checked = false;
-      pushLog('[Tinyhost] Đã chọn Tinyhost. Nhập domain Tinyhost riêng bên dưới, app chỉ random username dưới domain đó.');
-    }
     if (el.mailDomain) el.mailDomain.disabled = el.mode?.value === 'create_pay_unlink' || (el.randomMailDomain?.checked === true);
   });
 
@@ -1946,6 +2027,14 @@ function bindEvents() {
   el.clonemupOpenBtn?.addEventListener('click', async () => {
     const result = await window.desktopAPI.openExternalUrl('http://clonemup.com/');
     if (!result?.ok) pushLog(`[Clonemup] Không mở được website: ${result?.message || 'unknown error'}`);
+  });
+  el.khommoKey?.addEventListener('change', () => refreshKhommoProfile({ silent: true }));
+  el.khommoKey?.addEventListener('blur', () => refreshKhommoProfile({ silent: true }));
+  el.khommoBalanceCheckBtn?.addEventListener('click', () => refreshKhommoProfile({ silent: false }));
+  el.khommoProductId?.addEventListener('change', syncKhommoProductUi);
+  el.khommoOpenBtn?.addEventListener('click', async () => {
+    const result = await window.desktopAPI.openExternalUrl('https://khommo.vn/document-api');
+    if (!result?.ok) pushLog(`[Khommo] Không mở được website: ${result?.message || 'unknown error'}`);
   });
   el.shopgmail9999Key?.addEventListener('change', () => refreshShopGmail9999Profile({ silent: true }));
   el.shopgmail9999Key?.addEventListener('blur', () => refreshShopGmail9999Profile({ silent: true }));

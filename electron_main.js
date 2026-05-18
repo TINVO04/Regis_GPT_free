@@ -21,6 +21,7 @@ import { ensureDir, ensureFile, readJsonFile } from './src/shared/fsUtils.js';
 import { deployVercelRelay } from './src/core/vercelRelayService.js';
 import { SMSPoolService } from './src/core/services/SMSPoolService.js';
 import { ClonemupService } from './src/core/services/ClonemupService.js';
+import { KhommoService } from './src/core/services/KhommoService.js';
 import { ShopGmail9999Service } from './src/core/services/ShopGmail9999Service.js';
 import { HotmailAccountRepository } from './src/core/repositories/HotmailAccountRepository.js';
 
@@ -141,9 +142,7 @@ function ensureWorkspaceFiles(state) {
         router_password: '123456',
         selected_mail_domain: 'thangterter.online',
         random_mail_domain: false,
-        tinyhost_domain: 'tinyhost.shop',
         mail_domains: [
-          'tinyhost',
           'otpmail.online',
           'crossabc.site',
           '999ai.org',
@@ -157,7 +156,10 @@ function ensureWorkspaceFiles(state) {
           'gmail-shopgmail9999',
         ],
         clonemup_api_key: '',
-        clonemup_hotmail_product_id: 16133,
+        clonemup_hotmail_product_id: 7614,
+        khommo_api_key: '',
+        khommo_hotmail_product_id: 1,
+        hotmail_buy_provider: 'clonemup',
         vpn_enabled: true,
         vpn_extension_path: '',
         verify_provider: '9router',
@@ -1120,13 +1122,13 @@ function persistWorkspaceConfig(patch = {}) {
     mail_domains: [],
     selected_mail_domain: 'thangterter.online',
     random_mail_domain: false,
-    tinyhost_domain: 'tinyhost.shop',
     router_password: '123456',
     router_url: 'http://localhost:20128/dashboard/providers/codex',
     proxy_round_robin: false,
     proxy_apply_rotate: false,
     proxy_sticky: 1,
     clonemup_api_key: '',
+    khommo_api_key: '',
     shopgmail9999_api_key: '',
     shopgmail9999_service: 'chatgpt',
     shopgmail9999_otp_retries: 30,
@@ -1137,6 +1139,8 @@ function persistWorkspaceConfig(patch = {}) {
     cpl_test_card_expiry: '',
     cpl_test_card_cvc: '',
     clonemup_hotmail_product_id: 7614,
+    khommo_hotmail_product_id: 1,
+    hotmail_buy_provider: 'clonemup',
     vpn_enabled: true,
     vpn_extension_path: '',
     verify_provider: '9router',
@@ -1318,12 +1322,12 @@ function normalizeConfigPatch(payload = {}) {
     selected_mail_domain: keepLowerString(payload?.selectedMailDomain, current.selected_mail_domain, 'thangterter.online'),
     random_mail_domain: payload?.randomMailDomain === true,
     headless: payload?.headless === true,
-    tinyhost_domain: keepLowerString(payload?.tinyhostDomain, current.tinyhost_domain, 'tinyhost.shop'),
     router_password: keepString(payload?.routerPassword, current.router_password, '123456'),
     proxy_round_robin: payload?.proxyRoundRobin === true,
     proxy_apply_rotate: payload?.proxyApplyRotate === true,
     proxy_sticky: Math.max(1, Number.parseInt(payload?.proxySticky ?? current.proxy_sticky ?? 1, 10) || 1),
     clonemup_api_key: keepSecret(payload?.clonemupApiKey, current.clonemup_api_key),
+    khommo_api_key: keepSecret(payload?.khommoApiKey, current.khommo_api_key),
     shopgmail9999_api_key: keepSecret(payload?.shopgmail9999ApiKey, current.shopgmail9999_api_key),
     shopgmail9999_service: keepLowerString(payload?.shopgmail9999Service, current.shopgmail9999_service, 'chatgpt') || 'chatgpt',
     shopgmail9999_otp_retries: Math.max(1, Number.parseInt(payload?.shopgmail9999OtpRetries ?? current.shopgmail9999_otp_retries ?? 30, 10) || 30),
@@ -1334,6 +1338,8 @@ function normalizeConfigPatch(payload = {}) {
     cpl_test_card_expiry: keepSecret(payload?.cplTestCardExpiry, current.cpl_test_card_expiry),
     cpl_test_card_cvc: keepSecret(payload?.cplTestCardCvc, current.cpl_test_card_cvc),
     clonemup_hotmail_product_id: Math.max(1, Number.parseInt(payload?.clonemupHotmailProductId ?? current.clonemup_hotmail_product_id ?? 7614, 10) || 7614),
+    khommo_hotmail_product_id: Math.max(1, Number.parseInt(payload?.khommoHotmailProductId ?? current.khommo_hotmail_product_id ?? 1, 10) || 1),
+    hotmail_buy_provider: `${payload?.hotmailBuyProvider || current.hotmail_buy_provider || 'clonemup'}`.trim().toLowerCase() === 'khommo' ? 'khommo' : 'clonemup',
     verify_provider: normalizeVerifyProvider(payload?.verifyProvider ?? current.verify_provider ?? '9router'),
     cliproxyapi_auth_url: keepSecret(payload?.cliProxyApiAuthUrl, current.cliproxyapi_auth_url),
     cliproxyapi_executable_path: keepString(payload?.cliProxyApiExecutablePath, current.cliproxyapi_executable_path, getDefaultCliProxyApiExecutablePath()),
@@ -1379,6 +1385,19 @@ ipcMain.handle('clonemup:get-profile', async (_event, payload) => {
     return { ok: true, balance: result.balance, raw: result.raw, checkedAt: new Date().toISOString(), hotmailRunnableCount: getHotmailRunnableCount() };
   } catch (error) {
     return { ok: false, message: error.message || 'Không kiểm tra được số dư Clonemup.' };
+  }
+});
+
+ipcMain.handle('khommo:get-profile', async (_event, payload) => {
+  const current = readJsonFile(workspaceState.configFile, {});
+  const apiKey = `${payload?.apiKey || current.khommo_api_key || ''}`.trim();
+  if (!apiKey) return { ok: false, message: 'Thiếu Khommo API key.' };
+  try {
+    const service = new KhommoService(apiKey);
+    const result = await service.getProfile();
+    return { ok: true, balance: result.balance, raw: result.raw, checkedAt: new Date().toISOString(), hotmailRunnableCount: getHotmailRunnableCount() };
+  } catch (error) {
+    return { ok: false, message: error.message || 'Không kiểm tra được số dư Khommo.' };
   }
 });
 
@@ -1448,6 +1467,58 @@ ipcMain.handle('clonemup:buy-hotmail', async (_event, payload) => {
   }
 });
 
+ipcMain.handle('khommo:buy-hotmail', async (_event, payload) => {
+  if (isRunning) return { ok: false, message: 'Đang RUN. Hãy chờ xong hoặc Stop trước khi mua Hotmail.' };
+
+  const current = readJsonFile(workspaceState.configFile, {});
+  const apiKey = `${payload?.apiKey || current.khommo_api_key || ''}`.trim();
+  const amount = Math.max(1, Number.parseInt(payload?.amount, 10) || 0);
+  const productId = Math.max(1, Number.parseInt(payload?.productId ?? current.khommo_hotmail_product_id ?? 1, 10) || 1);
+  const batchSize = amount;
+  if (!apiKey) return { ok: false, message: 'Thiếu Khommo API key.' };
+  if (!amount) return { ok: false, message: 'Số lượng mua phải lớn hơn 0.' };
+
+  try {
+    const service = new KhommoService(apiKey);
+    const result = await service.buyProductInBatches({
+      totalAmount: amount,
+      productId,
+      batchSize,
+      onProgress: (event) => {
+        if (event.type === 'product-check' && event.summary) sendToRenderer('log:line', { line: `[Khommo] Product ${productId} info: ${event.summary}` });
+        if (event.type === 'product-check-error') sendToRenderer('log:line', { line: `[Khommo] Không đọc được info product ${productId}: ${event.message}` });
+        if (event.type === 'batch-start') sendToRenderer('log:line', { line: `[Khommo] Mua Hotmail product=${productId} batch ${event.batchIndex}/${event.totalBatches}, amount=${event.amount}, attempt=${event.attempt}` });
+        if (event.type === 'batch-success') sendToRenderer('log:line', { line: `[Khommo] Product ${productId} batch ${event.batchIndex}/${event.totalBatches} OK, nhận ${event.received}, trans=${event.transId || 'n/a'}, transport=${event.transport || 'n/a'}${event.rawSummary ? ` • ${event.rawSummary}` : ''}` });
+        if (event.type === 'batch-error') {
+          const transportDetail = Array.isArray(event.transportFailures) && event.transportFailures.length > 0
+            ? ` • ${event.transportFailures.map((item) => `${item.transport} => ${item.message}`).join(' || ')}`
+            : '';
+          sendToRenderer('log:line', { line: `[Khommo] Product ${productId} batch ${event.batchIndex}/${event.totalBatches} lỗi attempt=${event.attempt}${event.maintenanceStop ? ' • upstream maintenance' : ''}: ${event.message}${event.productSummary ? ` • ${event.productSummary}` : ''}${transportDetail}` });
+        }
+      },
+    });
+    const append = getHotmailRepository().appendPurchasedAccounts(result.lines);
+    if (append.rejected.length > 0) {
+      sendToRenderer('log:line', { line: `[Khommo] Có ${append.rejected.length} dòng Hotmail thiếu field. Kiểm tra product format: email|password|refreshToken|clientId|recoveryEmail.` });
+    }
+    let profile = null;
+    try { profile = await service.getProfile(); } catch { profile = null; }
+    return {
+      ok: true,
+      message: `Đã mua ${append.added.length}/${amount} Hotmail từ Khommo.`,
+      purchased: append.added.length,
+      requested: amount,
+      transactions: result.transactions,
+      failedBatches: result.failedBatches,
+      balance: profile?.balance || '',
+      checkedAt: new Date().toISOString(),
+      ...readWorkspaceData(),
+    };
+  } catch (error) {
+    return { ok: false, message: error.message || 'Mua Hotmail Khommo thất bại.', ...readWorkspaceData() };
+  }
+});
+
 ipcMain.handle('run:start', async (_event, payload) => {
   if (isRunning) {
     return { ok: false, message: 'Đang có tiến trình chạy. Hãy stop trước.' };
@@ -1465,7 +1536,6 @@ ipcMain.handle('run:start', async (_event, payload) => {
   const isCreatePayUnlinkMode = mode === 'create_pay_unlink';
   const selectedMailDomain = isCreatePayUnlinkMode ? 'gmail-shopgmail9999' : `${payload?.selectedMailDomain || ''}`.trim().toLowerCase();
   const randomMailDomain = isCreatePayUnlinkMode ? false : payload?.randomMailDomain === true;
-  const tinyhostDomain = `${payload?.tinyhostDomain || savedConfig.tinyhost_domain || 'tinyhost.shop'}`.trim().toLowerCase();
   const headless = payload?.headless === true;
   const shopgmail9999ApiKey = `${payload?.shopgmail9999ApiKey || ''}`.trim();
   const clonemupApiKey = `${payload?.clonemupApiKey || savedConfig.clonemup_api_key || ''}`.trim();
@@ -2015,11 +2085,6 @@ ipcMain.handle('run:start', async (_event, payload) => {
     return { ok: false, message: 'Domain Gmail - ShopGmail9999 cần ShopGmail9999 API key.' };
   }
 
-  if (selectedMailDomain === 'tinyhost' && !/^[^@\s]+\.[^@\s]+$/.test(tinyhostDomain)) {
-    stopCliProxyApiCapture(cliProxyApiCaptureProcess);
-    return { ok: false, message: 'Tinyhost cần domain hợp lệ. Hãy chọn Mail domain = Tinyhost và nhập Tinyhost domain, ví dụ tinyhost.shop.' };
-  }
-
   if (isCreatePayUnlinkMode && createPayUnlinkStage === 'stage2' && (!cplTestCardNumber || !cplTestCardExpiry || !cplTestCardCvc)) {
     stopCliProxyApiCapture(cliProxyApiCaptureProcess);
     return { ok: false, message: 'Mode 4 Stage 2 cần nhập card number, expiry, CVC trong UI hoặc cấu hình env CPL_TEST_CARD_NUMBER, CPL_TEST_CARD_EXPIRY, CPL_TEST_CARD_CVC.' };
@@ -2039,7 +2104,6 @@ ipcMain.handle('run:start', async (_event, payload) => {
     configPayload.cliProxyApiConfigPath = cliProxyApiCommand.configPath;
   }
   persistWorkspaceConfig(normalizeConfigPatch(configPayload));
-  MailOtpService.TINYHOST_SELECTED_DOMAIN = tinyhostDomain;
   patchPlaywrightLaunchVisibility({ headless });
 
   const nextPreflight = refreshPreflightState();
@@ -2101,7 +2165,6 @@ ipcMain.handle('run:start', async (_event, payload) => {
     selectedMailDomain,
     randomMailDomain,
     headless,
-    tinyhostDomain,
     shopgmail9999ApiKey,
     clonemupApiKey,
     workspaceDir: workspaceState.workspaceDir,
