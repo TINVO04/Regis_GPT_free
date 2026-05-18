@@ -57,18 +57,38 @@ export class KhommoService {
     throw lastError || new Error('Không kiểm tra được số dư Khommo.');
   }
 
-  async getProduct(productId = 1) {
+  async getProducts() {
     this.assertApiKey();
     const endpoints = [
-      this.buildUrl('product.php', { api_key: this.apiKey, product: productId }),
-      this.buildUrl('product', { api_key: this.apiKey, product: productId }),
-      this.buildUrl('products.php', { api_key: this.apiKey, product: productId }),
+      this.buildUrl('products.php', { api_key: this.apiKey }),
+      this.buildUrl('products', { api_key: this.apiKey }),
     ];
     let lastError = null;
     for (const url of endpoints) {
       try {
         const data = await this.fetchWithTimeout(url, { method: 'GET', headers: { Accept: 'application/json' } });
-        return { raw: data, summary: this.extractProductSummary(data) || this.summarizeRaw(data) };
+        return { raw: data, products: this.extractProductList(data) };
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError || new Error('Không đọc được danh sách sản phẩm Khommo.');
+  }
+
+  async getProduct(productId = 1) {
+    this.assertApiKey();
+    const endpoints = [
+      this.buildUrl('product.php', { api_key: this.apiKey, id: productId }),
+      this.buildUrl('product.php', { api_key: this.apiKey, product: productId }),
+      this.buildUrl('product.php', { api_key: this.apiKey, product_id: productId }),
+      this.buildUrl('product', { api_key: this.apiKey, id: productId }),
+    ];
+    let lastError = null;
+    for (const url of endpoints) {
+      try {
+        const data = await this.fetchWithTimeout(url, { method: 'GET', headers: { Accept: 'application/json' } });
+        const info = this.extractProductInfo(data, productId);
+        return { raw: data, summary: info.summary || this.summarizeRaw(data), info };
       } catch (error) {
         lastError = error;
       }
@@ -76,13 +96,42 @@ export class KhommoService {
     throw lastError || new Error('Không đọc được product Khommo.');
   }
 
-  extractPrimaryProduct(data) {
+  extractProductList(data) {
+    if (!data || typeof data !== 'object') return [];
+    const arrays = [data.products, data.product, data.data, data.data?.products, data.data?.product, data.items, data.list, data.categories]
+      .filter(Array.isArray);
+    const results = [];
+    const visit = (item) => {
+      if (!item || typeof item !== 'object') return;
+      const nested = [item.products, item.product, item.items, item.list, item.children].filter(Array.isArray);
+      if (nested.length) nested.forEach((items) => items.forEach(visit));
+      if (item.id || item.product_id || item.product || item.pid) results.push(item);
+    };
+    arrays.forEach((items) => items.forEach(visit));
+    if (!results.length && (data.id || data.product_id || data.product || data.pid)) results.push(data);
+    return results;
+  }
+
+  extractPrimaryProduct(data, productId = '') {
     if (!data || typeof data !== 'object') return null;
-    if (Array.isArray(data.product) && data.product[0] && typeof data.product[0] === 'object') return data.product[0];
-    if (Array.isArray(data.products) && data.products[0] && typeof data.products[0] === 'object') return data.products[0];
+    const wantedId = `${productId || ''}`.trim();
+    const listMatches = this.extractProductList(data);
+    if (listMatches.length) {
+      const exact = listMatches.find((item) => wantedId && `${item.id ?? item.product_id ?? item.product ?? item.pid ?? ''}`.trim() === wantedId);
+      return exact || listMatches[0];
+    }
+    const arrays = [data.product, data.products, data.data, data.data?.product, data.data?.products, data.items, data.list]
+      .filter(Array.isArray);
+    for (const items of arrays) {
+      const exact = items.find((item) => item && typeof item === 'object' && wantedId && `${item.id ?? item.product_id ?? item.product ?? item.pid ?? ''}`.trim() === wantedId);
+      if (exact) return exact;
+      const first = items.find((item) => item && typeof item === 'object');
+      if (first) return first;
+    }
     if (data.product && typeof data.product === 'object' && !Array.isArray(data.product)) return data.product;
-    if (data.data?.product && typeof data.data.product === 'object') return data.data.product;
-    return null;
+    if (data.data?.product && typeof data.data.product === 'object' && !Array.isArray(data.data.product)) return data.data.product;
+    if (data.data && typeof data.data === 'object' && !Array.isArray(data.data)) return data.data;
+    return data;
   }
 
   summarizeRaw(data) {
@@ -95,23 +144,46 @@ export class KhommoService {
     return candidates.map((value) => `${value}`.trim()).slice(0, 4).join(' | ');
   }
 
-  extractProductSummary(data) {
-    if (!data || typeof data !== 'object') return '';
-    const primaryProduct = this.extractPrimaryProduct(data);
+  extractProductInfo(data, productId = '') {
+    if (!data || typeof data !== 'object') return { id: `${productId || ''}`.trim(), summary: '' };
+    const primaryProduct = this.extractPrimaryProduct(data, productId);
+    const pick = (...values) => values.find((value) => value !== undefined && value !== null && `${value}`.trim() !== '');
+    const id = pick(primaryProduct?.id, primaryProduct?.product_id, primaryProduct?.product, primaryProduct?.pid, data.id, data.product_id, data.data?.id, productId);
+    const name = pick(primaryProduct?.name, primaryProduct?.product_name, primaryProduct?.title, data.name, data.product_name, data.data?.name);
+    const stock = pick(primaryProduct?.stock, primaryProduct?.quantity, primaryProduct?.available, primaryProduct?.warehouse, primaryProduct?.kho, primaryProduct?.amount, primaryProduct?.total, primaryProduct?.remain, data.stock, data.quantity, data.available, data.data?.stock);
+    const price = pick(primaryProduct?.price, primaryProduct?.cost, primaryProduct?.money, primaryProduct?.amount_price, primaryProduct?.unit_price, primaryProduct?.rate, data.price, data.cost, data.data?.price, data.amount);
+    const status = pick(data.status, data.result, data.product_status, data.data?.status, primaryProduct?.status);
+    const message = pick(data.msg, data.message, data.error, data.note, data.data?.message);
+    const min = pick(primaryProduct?.min, data.min, data.data?.min);
+    const max = pick(primaryProduct?.max, data.max, data.data?.max);
     const parts = [];
     const pushIf = (label, value) => {
       if (value === undefined || value === null || `${value}`.trim() === '') return;
       parts.push(`${label}=${`${value}`.trim()}`);
     };
-    pushIf('status', data.status || data.result || data.product_status || data.data?.status);
-    pushIf('msg', data.msg || data.message || data.error || data.note);
-    pushIf('id', primaryProduct?.id || data.id || data.product_id || data.data?.id);
-    pushIf('name', primaryProduct?.name || data.name || data.product_name || data.data?.name);
-    pushIf('stock', primaryProduct?.amount || primaryProduct?.stock || data.stock || data.quantity || data.available || data.data?.stock);
-    pushIf('price', primaryProduct?.price || data.price || data.cost || data.amount || data.data?.price);
-    pushIf('min', primaryProduct?.min || data.min || data.data?.min);
-    pushIf('max', primaryProduct?.max || data.max || data.data?.max);
-    return parts.join(', ');
+    pushIf('status', status);
+    pushIf('msg', message);
+    pushIf('id', id);
+    pushIf('name', name);
+    pushIf('stock', stock);
+    pushIf('price', price);
+    pushIf('min', min);
+    pushIf('max', max);
+    return {
+      id: `${id ?? productId ?? ''}`.trim(),
+      name: name ? `${name}`.trim() : '',
+      stock: stock === undefined || stock === null ? '' : `${stock}`.trim(),
+      price: price === undefined || price === null ? '' : `${price}`.trim(),
+      status: status ? `${status}`.trim() : '',
+      message: message ? `${message}`.trim() : '',
+      min: min === undefined || min === null ? '' : `${min}`.trim(),
+      max: max === undefined || max === null ? '' : `${max}`.trim(),
+      summary: parts.join(', '),
+    };
+  }
+
+  extractProductSummary(data, productId = '') {
+    return this.extractProductInfo(data, productId).summary;
   }
 
   isMaintenanceMessage(message = '') {

@@ -153,13 +153,13 @@ function ensureWorkspaceFiles(state) {
           'mail1h.com',
           'edumail.ovh',
           'hotmail',
+          'hotmail-khommo',
           'gmail-shopgmail9999',
         ],
         clonemup_api_key: '',
         clonemup_hotmail_product_id: 7614,
         khommo_api_key: '',
-        khommo_hotmail_product_id: 1,
-        hotmail_buy_provider: 'clonemup',
+        khommo_hotmail_product_id: 7511,
         vpn_enabled: true,
         vpn_extension_path: '',
         verify_provider: '9router',
@@ -1139,8 +1139,7 @@ function persistWorkspaceConfig(patch = {}) {
     cpl_test_card_expiry: '',
     cpl_test_card_cvc: '',
     clonemup_hotmail_product_id: 7614,
-    khommo_hotmail_product_id: 1,
-    hotmail_buy_provider: 'clonemup',
+    khommo_hotmail_product_id: 7511,
     vpn_enabled: true,
     vpn_extension_path: '',
     verify_provider: '9router',
@@ -1338,8 +1337,9 @@ function normalizeConfigPatch(payload = {}) {
     cpl_test_card_expiry: keepSecret(payload?.cplTestCardExpiry, current.cpl_test_card_expiry),
     cpl_test_card_cvc: keepSecret(payload?.cplTestCardCvc, current.cpl_test_card_cvc),
     clonemup_hotmail_product_id: Math.max(1, Number.parseInt(payload?.clonemupHotmailProductId ?? current.clonemup_hotmail_product_id ?? 7614, 10) || 7614),
-    khommo_hotmail_product_id: Math.max(1, Number.parseInt(payload?.khommoHotmailProductId ?? current.khommo_hotmail_product_id ?? 1, 10) || 1),
-    hotmail_buy_provider: `${payload?.hotmailBuyProvider || current.hotmail_buy_provider || 'clonemup'}`.trim().toLowerCase() === 'khommo' ? 'khommo' : 'clonemup',
+    khommo_hotmail_product_id: [7511, 6000].includes(Number.parseInt(payload?.khommoHotmailProductId ?? current.khommo_hotmail_product_id ?? 7511, 10))
+      ? Number.parseInt(payload?.khommoHotmailProductId ?? current.khommo_hotmail_product_id ?? 7511, 10)
+      : 7511,
     verify_provider: normalizeVerifyProvider(payload?.verifyProvider ?? current.verify_provider ?? '9router'),
     cliproxyapi_auth_url: keepSecret(payload?.cliProxyApiAuthUrl, current.cliproxyapi_auth_url),
     cliproxyapi_executable_path: keepString(payload?.cliProxyApiExecutablePath, current.cliproxyapi_executable_path, getDefaultCliProxyApiExecutablePath()),
@@ -1394,8 +1394,30 @@ ipcMain.handle('khommo:get-profile', async (_event, payload) => {
   if (!apiKey) return { ok: false, message: 'Thiếu Khommo API key.' };
   try {
     const service = new KhommoService(apiKey);
-    const result = await service.getProfile();
-    return { ok: true, balance: result.balance, raw: result.raw, checkedAt: new Date().toISOString(), hotmailRunnableCount: getHotmailRunnableCount() };
+    const [profile, productList] = await Promise.all([
+      service.getProfile(),
+      service.getProducts().catch(() => null),
+    ]);
+    const products = await Promise.all([7511, 6000].map(async (productId) => {
+      try {
+        const listItem = productList?.products?.find((item) => `${item.id ?? item.product_id ?? item.product ?? item.pid ?? ''}`.trim() === `${productId}`);
+        const detail = await service.getProduct(productId).catch(() => null);
+        const info = service.extractProductInfo(detail?.raw || listItem || {}, productId);
+        const listInfo = listItem ? service.extractProductInfo(listItem, productId) : null;
+        const mergedInfo = {
+          ...listInfo,
+          ...info,
+          price: info.price || listInfo?.price || '',
+          stock: info.stock || listInfo?.stock || '',
+          name: info.name || listInfo?.name || '',
+          summary: info.summary || listInfo?.summary || '',
+        };
+        return { ok: true, productId, ...mergedInfo, summary: mergedInfo.summary, raw: detail?.raw || listItem || null };
+      } catch (error) {
+        return { ok: false, productId, message: error.message || 'Không đọc được product Khommo.' };
+      }
+    }));
+    return { ok: true, balance: profile.balance, raw: profile.raw, products, checkedAt: new Date().toISOString(), hotmailRunnableCount: getHotmailRunnableCount() };
   } catch (error) {
     return { ok: false, message: error.message || 'Không kiểm tra được số dư Khommo.' };
   }
@@ -1473,7 +1495,8 @@ ipcMain.handle('khommo:buy-hotmail', async (_event, payload) => {
   const current = readJsonFile(workspaceState.configFile, {});
   const apiKey = `${payload?.apiKey || current.khommo_api_key || ''}`.trim();
   const amount = Math.max(1, Number.parseInt(payload?.amount, 10) || 0);
-  const productId = Math.max(1, Number.parseInt(payload?.productId ?? current.khommo_hotmail_product_id ?? 1, 10) || 1);
+  const requestedProductId = Number.parseInt(payload?.productId ?? current.khommo_hotmail_product_id ?? 7511, 10);
+  const productId = [7511, 6000].includes(requestedProductId) ? requestedProductId : 7511;
   const batchSize = amount;
   if (!apiKey) return { ok: false, message: 'Thiếu Khommo API key.' };
   if (!amount) return { ok: false, message: 'Số lượng mua phải lớn hơn 0.' };
@@ -1538,7 +1561,9 @@ ipcMain.handle('run:start', async (_event, payload) => {
   const randomMailDomain = isCreatePayUnlinkMode ? false : payload?.randomMailDomain === true;
   const headless = payload?.headless === true;
   const shopgmail9999ApiKey = `${payload?.shopgmail9999ApiKey || ''}`.trim();
-  const clonemupApiKey = `${payload?.clonemupApiKey || savedConfig.clonemup_api_key || ''}`.trim();
+  const clonemupApiKey = selectedMailDomain === 'hotmail-khommo'
+    ? `${payload?.khommoApiKey || savedConfig.khommo_api_key || ''}`.trim()
+    : `${payload?.clonemupApiKey || savedConfig.clonemup_api_key || ''}`.trim();
   const createPayUnlinkStage = `${payload?.createPayUnlinkStage || 'stage1'}`.trim().toLowerCase();
   const createPayUnlinkAllowSubmit = payload?.createPayUnlinkAllowSubmit === true;
   const createPayUnlinkDryRun = !createPayUnlinkAllowSubmit;
@@ -2162,7 +2187,7 @@ ipcMain.handle('run:start', async (_event, payload) => {
     smspoolKey,
     password,
     routerPassword,
-    selectedMailDomain,
+    selectedMailDomain: selectedMailDomain === 'hotmail-khommo' ? 'hotmail' : selectedMailDomain,
     randomMailDomain,
     headless,
     shopgmail9999ApiKey,

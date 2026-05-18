@@ -36,10 +36,9 @@ const el = {
   khommoBalanceValue: document.getElementById('khommo-balance-value'),
   khommoBalanceMeta: document.getElementById('khommo-balance-meta'),
   khommoBalanceCheckBtn: document.getElementById('khommo-balance-check-button'),
-  khommoProductId: document.getElementById('khommo-product-id-input'),
+  khommoProductSelect: document.getElementById('khommo-product-select'),
   khommoProductPriceNote: document.getElementById('khommo-product-price-note'),
   khommoOpenBtn: document.getElementById('khommo-open-button'),
-  hotmailBuyProvider: document.getElementById('hotmail-buy-provider-select'),
   shopgmail9999Key: document.getElementById('shopgmail9999-key-input'),
   shopgmail9999BalanceCard: document.getElementById('shopgmail9999-balance-card'),
   shopgmail9999BalanceValue: document.getElementById('shopgmail9999-balance-value'),
@@ -234,8 +233,7 @@ function initRuntimeInputs() {
     el.khommoKey,
     el.khommoBalanceCheckBtn,
     el.khommoOpenBtn,
-    el.khommoProductId,
-    el.hotmailBuyProvider,
+    el.khommoProductSelect,
     el.shopgmail9999Key,
     el.shopgmail9999BalanceCheckBtn,
     el.shopgmail9999OpenBtn,
@@ -485,10 +483,31 @@ function syncClonemupProductUi(options = {}) {
   }
 }
 
-function syncKhommoProductUi() {
-  const productId = Math.max(1, Number.parseInt(el.khommoProductId?.value || '1', 10) || 1);
+function formatKhommoProductLabel(product = {}) {
+  const productId = product.productId || product.id || '';
+  const price = product.price ? `${product.price}đ` : 'giá n/a';
+  const stock = product.stock !== undefined && product.stock !== null && `${product.stock}`.trim() !== '' ? `${product.stock}` : 'kho n/a';
+  const name = product.name ? ` • ${product.name}` : '';
+  return `ID ${productId}${name} • ${price} • kho ${stock}`;
+}
+
+function syncKhommoProductUi(products = null) {
+  const allowedIds = [7511, 6000];
+  const selectedId = Number.parseInt(el.khommoProductSelect?.value || '7511', 10);
+  if (el.khommoProductSelect && !allowedIds.includes(selectedId)) el.khommoProductSelect.value = '7511';
+  if (Array.isArray(products) && el.khommoProductSelect) {
+    products.forEach((product) => {
+      const productId = Number.parseInt(product.productId || product.id, 10);
+      const option = el.khommoProductSelect.querySelector(`option[value="${productId}"]`);
+      if (!option) return;
+      option.textContent = product.ok === false
+        ? `ID ${productId} • chưa đọc được giá/kho`
+        : formatKhommoProductLabel(product);
+    });
+  }
+  const activeOption = el.khommoProductSelect?.selectedOptions?.[0];
   if (el.khommoProductPriceNote) {
-    el.khommoProductPriceNote.textContent = `Product ${productId} • kiểm tra giá trên Khommo`;
+    el.khommoProductPriceNote.textContent = activeOption?.textContent || 'ID 7511 / 6000 • bấm Check để cập nhật giá/kho';
   }
 }
 
@@ -783,7 +802,7 @@ function setKhommoBalanceState({ status = 'idle', balance = '', message = '', ch
   }
 
   el.khommoBalanceValue.textContent = 'Chưa kiểm tra VNĐ';
-  el.khommoBalanceMeta.textContent = message || 'Nguồn mua Hotmail phụ, lưu chung vào accounts-hotmail.txt.';
+  el.khommoBalanceMeta.textContent = message || 'Chọn mail domain “Hotmail của Khommo” để mua/run Hotmail Khommo.';
   if (el.khommoBalanceCheckBtn) el.khommoBalanceCheckBtn.disabled = !authState.authenticated;
 }
 
@@ -878,21 +897,29 @@ async function refreshKhommoProfile({ silent = false } = {}) {
     if (!silent) pushLog(`[Khommo] Balance lỗi: ${result.message || 'Unknown error'}`);
     return null;
   }
+  syncKhommoProductUi(result.products || null);
   setKhommoBalanceState({ status: 'success', balance: result.balance, checkedAt: result.checkedAt, runnableCount: result.hotmailRunnableCount });
-  if (!silent) pushLog(`[Khommo] Balance: ${result.balance || 'OK'} • Hotmail RUN=${result.hotmailRunnableCount ?? 0}`);
+  if (!silent) {
+    const productText = Array.isArray(result.products) && result.products.length
+      ? ` • ${result.products.map(formatKhommoProductLabel).join(' | ')}`
+      : '';
+    pushLog(`[Khommo] Balance: ${result.balance || 'OK'} • Hotmail RUN=${result.hotmailRunnableCount ?? 0}${productText}`);
+  }
   return result;
 }
 
 async function buyHotmailAccounts() {
-  const provider = `${el.hotmailBuyProvider?.value || 'clonemup'}`.trim().toLowerCase();
-  const isKhommo = provider === 'khommo';
+  const selectedMailDomain = `${el.mailDomain?.value || ''}`.trim().toLowerCase();
+  const isKhommo = selectedMailDomain === 'hotmail-khommo';
+  const isClonemup = selectedMailDomain === 'hotmail';
+  if (!isKhommo && !isClonemup) return pushLog('[Hotmail] Hãy chọn Mail domain là hotmail (clonemup) hoặc Hotmail của Khommo trước khi mua.');
   const apiKey = isKhommo ? (el.khommoKey?.value.trim() || '') : el.clonemupKey.value.trim();
   const amount = Math.max(1, Number.parseInt(el.hotmailBuyAmount.value, 10) || 0);
   const label = isKhommo ? 'Khommo' : 'Clonemup';
   if (!apiKey) return pushLog(`[${label}] Thiếu API key để mua Hotmail`);
   if (!amount) return pushLog(`[${label}] Số lượng mua phải > 0`);
   const productId = isKhommo
-    ? Math.max(1, Number.parseInt(el.khommoProductId?.value || '1', 10) || 1)
+    ? ([7511, 6000].includes(Number.parseInt(el.khommoProductSelect?.value || '7511', 10)) ? Number.parseInt(el.khommoProductSelect?.value || '7511', 10) : 7511)
     : Math.max(1, Number.parseInt(el.clonemupProductId?.value || '7614', 10) || 7614);
   el.hotmailBuyBtn.disabled = true;
   pushLog(`[${label}] Đang mua ${amount} Hotmail product=${productId}...`);
@@ -963,8 +990,10 @@ function renderRuntimeConfig(config = {}) {
   if (el.clonemupProductId) el.clonemupProductId.value = Math.max(1, Number.parseInt(config.clonemup_hotmail_product_id ?? 7614, 10) || 7614);
   syncClonemupProductUi({ silentLegacyNormalization: true });
   if (config.khommo_api_key !== undefined && el.khommoKey) el.khommoKey.value = config.khommo_api_key || '';
-  if (el.khommoProductId) el.khommoProductId.value = Math.max(1, Number.parseInt(config.khommo_hotmail_product_id ?? 1, 10) || 1);
-  if (el.hotmailBuyProvider && config.hotmail_buy_provider !== undefined) el.hotmailBuyProvider.value = `${config.hotmail_buy_provider || 'clonemup'}`;
+  if (el.khommoProductSelect) {
+    const khommoProductId = Number.parseInt(config.khommo_hotmail_product_id ?? 7511, 10);
+    el.khommoProductSelect.value = [7511, 6000].includes(khommoProductId) ? `${khommoProductId}` : '7511';
+  }
   syncKhommoProductUi();
   if (config.shopgmail9999_api_key !== undefined && el.shopgmail9999Key) el.shopgmail9999Key.value = config.shopgmail9999_api_key || '';
   if (el.proxyRoundRobin && config.proxy_round_robin !== undefined) el.proxyRoundRobin.checked = config.proxy_round_robin === true;
@@ -1491,8 +1520,7 @@ function getConfigPayload() {
     clonemupApiKey: el.clonemupKey?.value.trim() || '',
     clonemupHotmailProductId: Math.max(1, Number.parseInt(el.clonemupProductId?.value || '7614', 10) || 7614),
     khommoApiKey: el.khommoKey?.value.trim() || '',
-    khommoHotmailProductId: Math.max(1, Number.parseInt(el.khommoProductId?.value || '1', 10) || 1),
-    hotmailBuyProvider: `${el.hotmailBuyProvider?.value || 'clonemup'}`.trim().toLowerCase(),
+    khommoHotmailProductId: [7511, 6000].includes(Number.parseInt(el.khommoProductSelect?.value || '7511', 10)) ? Number.parseInt(el.khommoProductSelect?.value || '7511', 10) : 7511,
     shopgmail9999ApiKey: el.shopgmail9999Key?.value.trim() || '',
     password: el.password.value.trim(),
     routerPassword: el.routerPassword.value.trim(),
@@ -1501,7 +1529,7 @@ function getConfigPayload() {
     cliProxyApiExecutablePath: el.cliProxyApiExecutable?.value.trim() || '',
     cliProxyApiConfigPath: el.cliProxyApiConfig?.value.trim() || '',
     selectedMailDomain,
-    randomMailDomain: ['hotmail', 'gmail-shopgmail9999'].includes(selectedMailDomain) ? false : randomMailDomainChecked,
+    randomMailDomain: ['hotmail', 'hotmail-khommo', 'gmail-shopgmail9999'].includes(selectedMailDomain) ? false : randomMailDomainChecked,
     headless: el.headless?.checked === true,
     createPayUnlinkStage: el.createPayUnlinkStage?.value || 'stage1',
     createPayUnlinkDryRun: el.mode?.value === 'create_pay_unlink' ? false : el.createPayUnlinkSubmit?.checked !== true,
@@ -1566,7 +1594,7 @@ function validateBeforeRun() {
     return null;
   }
 
-  if ((mode === 'verify' || mode === 'create_verify') && selectedMailDomain === 'hotmail') {
+  if ((mode === 'verify' || mode === 'create_verify') && ['hotmail', 'hotmail-khommo'].includes(selectedMailDomain)) {
     const pendingCount = tableState.hotmail.rows.filter((row) => `${row.status || ''}`.trim().toLowerCase() === 'pending').length;
     const mailReadyCount = tableState.hotmail.rows.filter((row) => `${row.status || ''}`.trim().toLowerCase() === 'mail_ready').length;
     const runnable = mode === 'verify' ? pendingCount : pendingCount + mailReadyCount;
@@ -1575,7 +1603,8 @@ function validateBeforeRun() {
       return null;
     }
     if (mode === 'create_verify' && runnable < count) {
-      pushLog(`[Hotmail] Hiện có ${runnable}/${count} Hotmail có thể xử lý (pending=${pendingCount}, mail_ready=${mailReadyCount}). Thiếu ${count - runnable}; core sẽ tự thuê Hotmail từ Clonemup, tạo ChatGPT và verify tiếp.`);
+      const sourceLabel = selectedMailDomain === 'hotmail-khommo' ? 'Khommo' : 'Clonemup';
+      pushLog(`[Hotmail] Hiện có ${runnable}/${count} Hotmail có thể xử lý (pending=${pendingCount}, mail_ready=${mailReadyCount}). Thiếu ${count - runnable}; hãy mua thêm Hotmail từ ${sourceLabel} nếu core không tự thuê được.`);
     }
   }
 
@@ -1804,8 +1833,10 @@ async function handleSaveConfig() {
       if (el.clonemupProductId && result.config.clonemup_hotmail_product_id !== undefined) el.clonemupProductId.value = Math.max(1, Number.parseInt(result.config.clonemup_hotmail_product_id, 10) || 7614);
       syncClonemupProductUi({ silentLegacyNormalization: true });
       if (el.khommoKey && result.config.khommo_api_key !== undefined) el.khommoKey.value = `${result.config.khommo_api_key || ''}`;
-      if (el.khommoProductId && result.config.khommo_hotmail_product_id !== undefined) el.khommoProductId.value = Math.max(1, Number.parseInt(result.config.khommo_hotmail_product_id, 10) || 1);
-      if (el.hotmailBuyProvider && result.config.hotmail_buy_provider !== undefined) el.hotmailBuyProvider.value = `${result.config.hotmail_buy_provider || 'clonemup'}`;
+      if (el.khommoProductSelect && result.config.khommo_hotmail_product_id !== undefined) {
+        const khommoProductId = Number.parseInt(result.config.khommo_hotmail_product_id, 10);
+        el.khommoProductSelect.value = [7511, 6000].includes(khommoProductId) ? `${khommoProductId}` : '7511';
+      }
       syncKhommoProductUi();
       if (el.shopgmail9999Key && result.config.shopgmail9999_api_key !== undefined) el.shopgmail9999Key.value = `${result.config.shopgmail9999_api_key || ''}`;
       if (el.cplCardNumber && result.config.cpl_test_card_number !== undefined) el.cplCardNumber.value = `${result.config.cpl_test_card_number || ''}`;
@@ -2031,7 +2062,7 @@ function bindEvents() {
   el.khommoKey?.addEventListener('change', () => refreshKhommoProfile({ silent: true }));
   el.khommoKey?.addEventListener('blur', () => refreshKhommoProfile({ silent: true }));
   el.khommoBalanceCheckBtn?.addEventListener('click', () => refreshKhommoProfile({ silent: false }));
-  el.khommoProductId?.addEventListener('change', syncKhommoProductUi);
+  el.khommoProductSelect?.addEventListener('change', () => syncKhommoProductUi());
   el.khommoOpenBtn?.addEventListener('click', async () => {
     const result = await window.desktopAPI.openExternalUrl('https://khommo.vn/document-api');
     if (!result?.ok) pushLog(`[Khommo] Không mở được website: ${result?.message || 'unknown error'}`);
