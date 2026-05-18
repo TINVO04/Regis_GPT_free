@@ -29,6 +29,14 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const appRootDir = path.resolve(__dirname);
 const APP_VERSION = app.getVersion();
+
+// Safety mode: tránh Electron/Chromium dùng GPU quá nặng làm máy đen màn/reboot khi chạy nhiều account.
+app.disableHardwareAcceleration();
+app.commandLine.appendSwitch('disable-gpu');
+app.commandLine.appendSwitch('disable-software-rasterizer');
+app.commandLine.appendSwitch('disable-gpu-compositing');
+app.commandLine.appendSwitch('disable-gpu-rasterization');
+
 const PUBLIC_UPDATE_REPO_OWNER = 'NDuyPhuc';
 const PUBLIC_UPDATE_REPO_NAME = 'CodexAccountStudio-Releases';
 const PUBLIC_RELEASES_URL = `https://github.com/${PUBLIC_UPDATE_REPO_OWNER}/${PUBLIC_UPDATE_REPO_NAME}/releases`;
@@ -1327,10 +1335,28 @@ function stopCliProxyApiCapture(captureProcess) {
 function patchPlaywrightLaunchVisibility({ headless = false } = {}) {
   globalThis.__codexBrowserHeadless = headless === true;
 
-  const buildLaunchOptions = (options = {}) => ({
-    ...options,
-    headless: globalThis.__codexBrowserHeadless === true ? true : false,
-  });
+  const safeBrowserArgs = [
+    '--disable-gpu',
+    '--disable-gpu-compositing',
+    '--disable-gpu-rasterization',
+    '--disable-software-rasterizer',
+    '--disable-dev-shm-usage',
+    '--disable-background-timer-throttling',
+    '--disable-backgrounding-occluded-windows',
+    '--disable-renderer-backgrounding',
+    '--no-first-run',
+    '--no-default-browser-check',
+  ];
+
+  const buildLaunchOptions = (options = {}) => {
+    const existingArgs = Array.isArray(options.args) ? options.args : [];
+    const mergedArgs = [...new Set([...existingArgs, ...safeBrowserArgs])];
+    return {
+      ...options,
+      args: mergedArgs,
+      headless: globalThis.__codexBrowserHeadless === true ? true : false,
+    };
+  };
 
   const patchLaunch = (browserType, label = 'browser') => {
     if (!browserType || browserType.__codexLaunchVisibilityPatched) return;
@@ -2455,6 +2481,10 @@ ipcMain.handle('run:start', async (_event, payload) => {
     selectedMailDomain: selectedMailDomain === 'hotmail-khommo' ? 'hotmail' : selectedMailDomain,
     randomMailDomain,
     headless,
+    maxWorkers: 1,
+    max_workers: 1,
+    slowMo: 1000,
+    slow_mo: 1000,
     shopgmail9999ApiKey,
     clonemupApiKey,
     workspaceDir: workspaceState.workspaceDir,
