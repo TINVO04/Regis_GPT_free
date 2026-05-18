@@ -1178,7 +1178,7 @@ function buildCliProxyApiCommand(payload = {}, current = {}) {
   const configPath = `${payload.cliProxyApiConfigPath || current.cliproxyapi_config_path || getDefaultCliProxyApiConfigPath()}`.trim();
   const args = [];
   if (configPath) args.push('-config', configPath);
-  args.push('-codex-login');
+  args.push('-codex-login', '-no-browser');
   return { executablePath, configPath, args };
 }
 
@@ -1716,7 +1716,7 @@ ipcMain.handle('run:start', async (_event, payload) => {
       cliProxyApiExecutablePath: cliProxyApiCommand.executablePath,
       cliProxyApiConfigPath: cliProxyApiCommand.configPath,
     }));
-    sendToRenderer('log:line', { line: '[CLIProxyAPI] Đã bắt OAuth URL mới. Giữ process sống tới khi account hiện tại verify xong.' });
+    sendToRenderer('log:line', { line: '[CLIProxyAPI] Đã bắt OAuth URL mới bằng -no-browser. OAuth sẽ chỉ mở trong browser automation, không mở thêm tab Edge mặc định.' });
     return cliProxyApiAuthUrl;
   };
 
