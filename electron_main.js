@@ -1579,6 +1579,14 @@ ipcMain.handle('run:start', async (_event, payload) => {
           return proxyError;
         }
 
+        const canTreatCreateAsCompletedAfterProfile = this.__createCompletedAfterMailOtpProfileSubmit === true
+          && Date.now() - Number(this.__createCompletedAfterMailOtpProfileSubmitAt || 0) < 5 * 60 * 1000;
+
+        if (canTreatCreateAsCompletedAfterProfile) {
+          this.log?.('✅ Đã nhập OTP mail + tên/tuổi và bấm Tạo/Continue, xem như create hoàn thành và đưa account vào pending.');
+          return { step: 'home', detail: 'create_completed_after_mail_otp_and_profile_submit' };
+        }
+
         const canTreatChatGptHomeAsCreateSuccess = this.__mailOtpSubmittedForCreateSuccess === true
           && Date.now() - Number(this.__mailOtpSubmittedAt || 0) < 5 * 60 * 1000;
 
@@ -1660,15 +1668,24 @@ ipcMain.handle('run:start', async (_event, payload) => {
 
     const originalClickLocatorWithRetry = ChatGPTAccountCreatorCore.prototype.clickLocatorWithRetry;
     if (typeof originalClickLocatorWithRetry === 'function' && typeof originalFillSignupProfile === 'function') {
+      const markCreateCompletedAfterMailOtpProfileSubmit = (core, reason = '') => {
+        core.__createCompletedAfterMailOtpProfileSubmit = true;
+        core.__createCompletedAfterMailOtpProfileSubmitAt = Date.now();
+        core.log?.(`✅ Đã nhập OTP mail + tên/tuổi và bấm Tạo/Continue${reason ? ` (${reason})` : ''}. Không chờ kiểm tra thêm, chuyển account sang pending.`);
+      };
+
       ChatGPTAccountCreatorCore.prototype.clickLocatorWithRetry = async function patchedClickLocatorWithRetry(locator, options = {}) {
         const label = `${options?.label || ''}`;
         if (/sign\s*up|submit\s+sau\s+email|continue\s+sau\s+email/i.test(label)) {
           this.__mailOtpSubmittedForCreateSuccess = false;
           this.__mailOtpSubmittedAt = 0;
+          this.__createCompletedAfterMailOtpProfileSubmit = false;
+          this.__createCompletedAfterMailOtpProfileSubmitAt = 0;
         }
 
         const delayed = this.__currentCreatePage ? delayedProfiles.get(this.__currentCreatePage) : null;
-        if (delayed && /OTP.*profile|profile.*OTP/i.test(label)) {
+        const isOtpProfileSubmit = Boolean(delayed && /OTP.*profile|profile.*OTP/i.test(label));
+        if (isOtpProfileSubmit) {
           delayedProfiles.delete(this.__currentCreatePage);
           this.log?.('👤 OTP đã nhập xong, bắt đầu nhập tên/tuổi trước khi bấm Continue cuối màn OTP + profile...');
           await originalFillSignupProfile.call(this, this.__currentCreatePage, delayed.state, delayed.generatedName, {
@@ -1678,9 +1695,20 @@ ipcMain.handle('run:start', async (_event, payload) => {
         }
 
         const result = await originalClickLocatorWithRetry.call(this, locator, options);
-        if (/OTP\s*mail|submit\s+(?:lại\s+)?sau\s+OTP|sau\s+OTP\s+mail/i.test(label)) {
+        const isMailOtpSubmit = /OTP\s*mail|submit\s+(?:lại\s+)?sau\s+OTP|sau\s+OTP\s+mail/i.test(label);
+        if (isMailOtpSubmit) {
           this.__mailOtpSubmittedForCreateSuccess = true;
           this.__mailOtpSubmittedAt = Date.now();
+        }
+
+        const hasFreshMailOtpSubmit = this.__mailOtpSubmittedForCreateSuccess === true
+          && Date.now() - Number(this.__mailOtpSubmittedAt || 0) < 5 * 60 * 1000;
+        const isProfileSubmitAfterOtp = hasFreshMailOtpSubmit
+          && /profile|tên|tuổi|full\s*name|how\s*old|finish\s*creating|create\s*account|tạo|continue\s+cuối|submit\s+profile|signup\s+profile/i.test(label)
+          && !/submit\s+sau\s+email|continue\s+sau\s+email/i.test(label);
+
+        if (isOtpProfileSubmit || isProfileSubmitAfterOtp) {
+          markCreateCompletedAfterMailOtpProfileSubmit(this, isOtpProfileSubmit ? 'OTP + profile cùng trang' : 'profile sau OTP');
         }
         return result;
       };
