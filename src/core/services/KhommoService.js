@@ -98,17 +98,22 @@ export class KhommoService {
 
   extractProductList(data) {
     if (!data || typeof data !== 'object') return [];
-    const arrays = [data.products, data.product, data.data, data.data?.products, data.data?.product, data.items, data.list, data.categories]
-      .filter(Array.isArray);
     const results = [];
+    const seen = new Set();
     const visit = (item) => {
       if (!item || typeof item !== 'object') return;
-      const nested = [item.products, item.product, item.items, item.list, item.children].filter(Array.isArray);
-      if (nested.length) nested.forEach((items) => items.forEach(visit));
-      if (item.id || item.product_id || item.product || item.pid) results.push(item);
+      if (seen.has(item)) return;
+      seen.add(item);
+      if (item.id || item.product_id || item.product || item.pid || item.productId) results.push(item);
+      if (Array.isArray(item)) {
+        item.forEach(visit);
+        return;
+      }
+      Object.values(item).forEach((value) => {
+        if (value && typeof value === 'object') visit(value);
+      });
     };
-    arrays.forEach((items) => items.forEach(visit));
-    if (!results.length && (data.id || data.product_id || data.product || data.pid)) results.push(data);
+    visit(data);
     return results;
   }
 
@@ -148,10 +153,26 @@ export class KhommoService {
     if (!data || typeof data !== 'object') return { id: `${productId || ''}`.trim(), summary: '' };
     const primaryProduct = this.extractPrimaryProduct(data, productId);
     const pick = (...values) => values.find((value) => value !== undefined && value !== null && `${value}`.trim() !== '');
-    const id = pick(primaryProduct?.id, primaryProduct?.product_id, primaryProduct?.product, primaryProduct?.pid, data.id, data.product_id, data.data?.id, productId);
-    const name = pick(primaryProduct?.name, primaryProduct?.product_name, primaryProduct?.title, data.name, data.product_name, data.data?.name);
-    const stock = pick(primaryProduct?.stock, primaryProduct?.quantity, primaryProduct?.available, primaryProduct?.warehouse, primaryProduct?.kho, primaryProduct?.amount, primaryProduct?.total, primaryProduct?.remain, data.stock, data.quantity, data.available, data.data?.stock);
-    const price = pick(primaryProduct?.price, primaryProduct?.cost, primaryProduct?.money, primaryProduct?.amount_price, primaryProduct?.unit_price, primaryProduct?.rate, data.price, data.cost, data.data?.price, data.amount);
+    const pickByKeys = (source, keys = []) => {
+      if (!source || typeof source !== 'object') return '';
+      for (const [key, value] of Object.entries(source)) {
+        const normalizedKey = `${key}`.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+        if (keys.includes(normalizedKey) && value !== undefined && value !== null && `${value}`.trim() !== '') return value;
+      }
+      return '';
+    };
+    const id = pick(primaryProduct?.id, primaryProduct?.product_id, primaryProduct?.product, primaryProduct?.pid, primaryProduct?.productId, data.id, data.product_id, data.data?.id, productId);
+    const name = pick(primaryProduct?.name, primaryProduct?.product_name, primaryProduct?.title, primaryProduct?.service, data.name, data.product_name, data.data?.name);
+    const stock = pick(
+      pickByKeys(primaryProduct, ['stock', 'quantity', 'available', 'warehouse', 'kho', 'amount', 'total', 'remain', 'remaining', 'remains', 'inventory', 'instock', 'inwarehouse', 'count', 'live', 'totalstore', 'totalstock']),
+      pickByKeys(data, ['stock', 'quantity', 'available', 'warehouse', 'kho', 'amount', 'total', 'remain', 'remaining', 'inventory', 'instock', 'count', 'live']),
+      pickByKeys(data.data, ['stock', 'quantity', 'available', 'warehouse', 'kho', 'amount', 'total', 'remain', 'remaining', 'inventory', 'instock', 'count', 'live']),
+    );
+    const price = pick(
+      pickByKeys(primaryProduct, ['price', 'cost', 'money', 'amountprice', 'unitprice', 'rate', 'gia', 'giaban', 'pricevnd', 'pricevn', 'vnd', 'sellprice', 'priceusd', 'usd']),
+      pickByKeys(data, ['price', 'cost', 'money', 'amountprice', 'unitprice', 'rate', 'gia', 'giaban', 'pricevnd', 'pricevn', 'vnd', 'sellprice', 'priceusd', 'usd']),
+      pickByKeys(data.data, ['price', 'cost', 'money', 'amountprice', 'unitprice', 'rate', 'gia', 'giaban', 'pricevnd', 'pricevn', 'vnd', 'sellprice', 'priceusd', 'usd']),
+    );
     const status = pick(data.status, data.result, data.product_status, data.data?.status, primaryProduct?.status);
     const message = pick(data.msg, data.message, data.error, data.note, data.data?.message);
     const min = pick(primaryProduct?.min, data.min, data.data?.min);
