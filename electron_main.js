@@ -1622,7 +1622,7 @@ ipcMain.handle('run:start', async (_event, payload) => {
   const verifyProvider = normalizeVerifyProvider(payload?.verifyProvider || savedConfig.verify_provider || '9router');
   const cliProxyApiCommand = buildCliProxyApiCommand(payload, savedConfig);
   const isKhommoHotmailRun = (mode === 'create' || mode === 'create_verify') && selectedMailDomain === 'hotmail-khommo';
-  const khommoNeededStatus = mode === 'create_verify' ? 'pending' : 'mail_ready';
+  const khommoNeededStatus = 'mail_ready';
   const khommoProductId = [7511, 6000].includes(Number.parseInt(payload?.khommoHotmailProductId ?? savedConfig.khommo_hotmail_product_id ?? 7511, 10))
     ? Number.parseInt(payload?.khommoHotmailProductId ?? savedConfig.khommo_hotmail_product_id ?? 7511, 10)
     : 7511;
@@ -2368,9 +2368,7 @@ ipcMain.handle('run:start', async (_event, payload) => {
   const ensureOneKhommoHotmailForSession = async (accountIndex = 1) => {
     if (!isKhommoHotmailRun) return { ok: true, purchased: false };
     const repo = getHotmailRepository();
-    const availableCount = mode === 'create_verify'
-      ? repo.getPendingAccounts().length
-      : repo.getReadyMailAccounts().length;
+    const availableCount = repo.getReadyMailAccounts().length;
     if (availableCount > 0) {
       sendToRenderer('log:line', { line: `[Khommo] Account ${accountIndex}/${count}: còn ${availableCount} Hotmail status=${khommoNeededStatus}, không mua thêm trước.` });
       return { ok: true, purchased: false };
@@ -2445,12 +2443,12 @@ ipcMain.handle('run:start', async (_event, payload) => {
     return selectedProxy ? [selectedProxy] : [];
   };
 
-  const buildRunOptions = (runCount, proxyAccountIndex = 1) => {
+  const buildRunOptions = (runCount, proxyAccountIndex = 1, modeOverride = mode) => {
     const runtimeProxyPools = pickProxyPoolsForRun(proxyAccountIndex);
     currentRuntimeProxyPool = runtimeProxyPools[0] || null;
     return {
     count: runCount,
-    mode,
+    mode: modeOverride,
     smspoolKey,
     password,
     routerPassword,
@@ -2522,12 +2520,29 @@ ipcMain.handle('run:start', async (_event, payload) => {
       }
 
       currentRuntimeProxyPool = await validateRuntimeProxyBeforeRun(pickProxyPoolsForRun(accountIndex)[0] || null, accountIndex);
-      if (needsVerifyProvider && verifyProvider === 'cliproxyapi') {
-        sendToRenderer('log:line', { line: `[CLIProxyAPI] Verify account ${accountIndex}/${count} bằng OAuth URL mới.` });
-      } else if (isKhommoHotmailRun) {
-        sendToRenderer('log:line', { line: `[Khommo] Chạy phiên account ${accountIndex}/${count} với tối đa 1 Hotmail khả dụng trong phiên này.` });
+      if (isKhommoHotmailRun && mode === 'create_verify') {
+        sendToRenderer('log:line', { line: `[Khommo] Create+Verify account ${accountIndex}/${count}: chạy CREATE trước bằng Hotmail mail_ready; không dùng pending verify/OAuth trước.` });
+        const createSummary = await runCreator(buildRunOptions(1, accountIndex, 'create'));
+        totalSuccessful += Number.parseInt(createSummary?.successful ?? 0, 10) || 0;
+        totalFailed += Number.parseInt(createSummary?.failed ?? 0, 10) || 0;
+        forced = createSummary?.forced === true;
+        latestSummary = createSummary;
+        if (forced) break;
+
+        if (verifyProvider === 'cliproxyapi') {
+          await captureFreshCliProxyApiAuthUrl(`verify account ${accountIndex}/${count}`);
+          sendToRenderer('log:line', { line: `[CLIProxyAPI] Sau khi create xong mới bắt OAuth URL để verify account ${accountIndex}/${count}.` });
+        }
+        sendToRenderer('log:line', { line: `[Khommo] Create+Verify account ${accountIndex}/${count}: bắt đầu VERIFY sau khi create hoàn tất.` });
+        latestSummary = await runCreator(buildRunOptions(1, accountIndex, 'verify'));
+      } else {
+        if (needsVerifyProvider && verifyProvider === 'cliproxyapi') {
+          sendToRenderer('log:line', { line: `[CLIProxyAPI] Verify account ${accountIndex}/${count} bằng OAuth URL mới.` });
+        } else if (isKhommoHotmailRun) {
+          sendToRenderer('log:line', { line: `[Khommo] Chạy phiên account ${accountIndex}/${count} với tối đa 1 Hotmail khả dụng trong phiên này.` });
+        }
+        latestSummary = await runCreator(buildRunOptions(1, accountIndex));
       }
-      latestSummary = await runCreator(buildRunOptions(1, accountIndex));
       totalSuccessful += Number.parseInt(latestSummary?.successful ?? 0, 10) || 0;
       totalFailed += Number.parseInt(latestSummary?.failed ?? 0, 10) || 0;
       forced = latestSummary?.forced === true;
