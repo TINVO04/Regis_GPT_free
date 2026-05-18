@@ -1616,6 +1616,121 @@ ipcMain.handle('run:start', async (_event, payload) => {
       }).catch(() => false);
     };
 
+    const addUniqueOrderId = (items = [], orderId = '') => {
+      const normalized = `${orderId || ''}`.trim();
+      if (normalized && !items.includes(normalized)) items.push(normalized);
+    };
+
+    const getPhoneInputLocator = async (page) => {
+      if (!page) return null;
+      const selectors = [
+        'input[type="tel"]',
+        'input[autocomplete="tel"]',
+        'input[inputmode="tel"]',
+        'input[name*="phone" i]',
+        'input[id*="phone" i]',
+        'input[placeholder*="phone" i]',
+        'input[aria-label*="phone" i]',
+        'input:not([type="hidden"]):not([name="code"]):not([autocomplete="one-time-code"])',
+      ];
+
+      for (const selector of selectors) {
+        const locator = page.locator(selector).first();
+        if (await locator.isVisible({ timeout: 700 }).catch(() => false)) return locator;
+      }
+
+      return null;
+    };
+
+    const fillPhoneNumberOnCurrentPage = async (core, page, smsItem) => {
+      const phoneNumber = `${smsItem?.phoneNumber || ''}`.trim();
+      if (!page || !phoneNumber) return false;
+
+      await core.selectUsPhoneCountry?.(page).catch(() => false);
+      const phoneInput = await getPhoneInputLocator(page);
+      if (!phoneInput) return false;
+
+      await phoneInput.click({ timeout: 5000 }).catch(() => {});
+      await phoneInput.fill('', { timeout: 5000 }).catch(async () => {
+        await page.keyboard.press('Control+A').catch(() => {});
+        await page.keyboard.press('Backspace').catch(() => {});
+      });
+      await phoneInput.fill(phoneNumber, { timeout: 8000 });
+      core.log?.(`📲 Đã xoá số cũ và nhập số mới ngay trên trang hiện tại: +${phoneNumber} (Order ${smsItem.orderId || 'unknown'}).`);
+      return true;
+    };
+
+    const retryRejectedPhoneOnSamePage = async (core, page, locator, options, originalClickLocatorWithRetry, detectRejected) => {
+      const context = core.__smsPhoneRetryContext;
+      const currentItem = core.__smsCurrentItem;
+      if (!context?.smsService || !currentItem?.orderId || typeof core.getValidSmsItem !== 'function') return false;
+
+      const activeItemRef = currentItem;
+      let lastRejectedOrderId = `${activeItemRef.orderId || ''}`.trim();
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        if (lastRejectedOrderId) {
+          const itemInState = core.__smsCurrentStateItem?.orderId === lastRejectedOrderId
+            ? core.__smsCurrentStateItem
+            : core.findSmsItemByOrderId?.(lastRejectedOrderId) || activeItemRef;
+          core.exhaustSmsItem?.(itemInState, 'phone_rejected_same_page_retry');
+          addUniqueOrderId(context.excludedOrderIds, lastRejectedOrderId);
+          addUniqueOrderId(context.exhaustedOrderIds, lastRejectedOrderId);
+        }
+
+        core.log?.(`🔁 Thử lấy số SMS mới và nhập lại ngay trên cùng trang verify (${attempt}/3), không thoát/login lại...`, 'WARNING');
+        const nextItem = await core.getValidSmsItem(
+          context.smsService,
+          context.excludedOrderIds,
+          context.incorrectOrderIds,
+          context.exhaustedOrderIds,
+        );
+        if (!nextItem?.phoneNumber || !nextItem?.orderId) return false;
+
+        const nextStateItem = core.findSmsItemByOrderId?.(nextItem.orderId) || nextItem;
+        core.__smsCurrentStateItem = nextStateItem;
+        Object.assign(activeItemRef, nextItem);
+        core.__smsCurrentItem = activeItemRef;
+        const filled = await fillPhoneNumberOnCurrentPage(core, page, activeItemRef);
+        if (!filled) return false;
+
+        const clicked = await originalClickLocatorWithRetry.call(core, locator, options);
+        if (!clicked) return false;
+        await core.sleep?.(2500);
+
+        const stillRejected = await detectRejected(page);
+        if (!stillRejected) return true;
+        core.log?.('📵 Số mới cũng bị OpenAI từ chối. Sẽ bỏ số này và thử số khác trên cùng trang.', 'WARNING');
+        lastRejectedOrderId = `${activeItemRef.orderId || ''}`.trim();
+      }
+
+      return false;
+    };
+
+    const originalGetValidSmsItem = ChatGPTAccountCreatorCore.prototype.getValidSmsItem;
+    if (typeof originalGetValidSmsItem === 'function') {
+      ChatGPTAccountCreatorCore.prototype.getValidSmsItem = async function patchedSamePageGetValidSmsItem(smsService, excludedOrderIds = [], incorrectOrderIds = [], exhaustedOrderIds = [], ...args) {
+        this.__smsPhoneRetryContext = { smsService, excludedOrderIds, incorrectOrderIds, exhaustedOrderIds };
+        const smsItem = await originalGetValidSmsItem.call(this, smsService, excludedOrderIds, incorrectOrderIds, exhaustedOrderIds, ...args);
+        this.__smsCurrentStateItem = smsItem;
+        this.__smsCurrentItem = smsItem ? { ...smsItem } : smsItem;
+        return this.__smsCurrentItem;
+      };
+    }
+
+    const originalSaveSMSState = ChatGPTAccountCreatorCore.prototype.saveSMSState;
+    if (typeof originalSaveSMSState === 'function') {
+      ChatGPTAccountCreatorCore.prototype.saveSMSState = function patchedSamePageSaveSMSState(...args) {
+        const holder = this.__smsCurrentItem;
+        const stateItem = this.__smsCurrentStateItem;
+        if (holder?.orderId && stateItem?.orderId === holder.orderId) {
+          stateItem.usageCount = Number(holder.usageCount || stateItem.usageCount || 0);
+          stateItem.phoneNumber = holder.phoneNumber || stateItem.phoneNumber;
+          stateItem.updatedAt = holder.updatedAt || stateItem.updatedAt || new Date().toISOString();
+        }
+        return originalSaveSMSState.call(this, ...args);
+      };
+    }
+
     const originalDetectPhoneMaxUsageExceeded = ChatGPTAccountCreatorCore.prototype.detectPhoneMaxUsageExceeded;
     if (typeof originalDetectPhoneMaxUsageExceeded === 'function') {
       ChatGPTAccountCreatorCore.prototype.detectPhoneMaxUsageExceeded = async function patchedDetectPhoneMaxUsageExceeded(page, ...args) {
@@ -1642,8 +1757,12 @@ ipcMain.handle('run:start', async (_event, payload) => {
           const page = typeof locator?.page === 'function' ? locator.page() : this.__currentCreatePage;
           const phoneRejected = await detectOpenAiPhoneRejected(page);
           if (phoneRejected) {
-            this.log?.('📵 OpenAI vừa báo lỗi/rate-limit số sau khi bấm Continue. Dừng chờ SMS và lấy số mới ngay.', 'WARNING');
-            throw new Error('PHONE_MAX_USAGE_EXCEEDED: OpenAI rejected phone number before SMS wait');
+            this.log?.('📵 OpenAI vừa báo lỗi/rate-limit số sau khi bấm Continue. Sẽ xoá số cũ và thử số mới ngay trên trang hiện tại.', 'WARNING');
+            const samePageRetried = await retryRejectedPhoneOnSamePage(this, page, locator, options, originalClickLocatorWithRetry, detectOpenAiPhoneRejected);
+            if (samePageRetried) return true;
+
+            const orderId = `${this.__smsCurrentItem?.orderId || ''}`.trim();
+            throw new Error(`PHONE_MAX_USAGE_EXCEEDED:${orderId || 'unknown'}`);
           }
         }
         return result;
