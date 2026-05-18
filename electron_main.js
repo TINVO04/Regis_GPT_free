@@ -1621,6 +1621,18 @@ ipcMain.handle('run:start', async (_event, payload) => {
       if (normalized && !items.includes(normalized)) items.push(normalized);
     };
 
+    const purgeUsedUpSmsItems = (core, reason = 'used_up') => {
+      if (!Array.isArray(core?.smsList)) return 0;
+      const before = core.smsList.length;
+      core.smsList = core.smsList.filter((item) => Number(item?.usageCount || 0) < 3);
+      const removed = before - core.smsList.length;
+      if (removed > 0) {
+        core.saveSMSState?.();
+        core.log?.(`🧹 Đã xoá ${removed} số SMS usageCount >= 3 khỏi danh sách ứng viên (${reason}) để khỏi kiểm tra lại.`);
+      }
+      return removed;
+    };
+
     const getPhoneInputLocator = async (page) => {
       if (!page) return null;
       const selectors = [
@@ -1675,6 +1687,7 @@ ipcMain.handle('run:start', async (_event, payload) => {
           core.exhaustSmsItem?.(itemInState, 'phone_rejected_same_page_retry');
           addUniqueOrderId(context.excludedOrderIds, lastRejectedOrderId);
           addUniqueOrderId(context.exhaustedOrderIds, lastRejectedOrderId);
+          purgeUsedUpSmsItems(core, 'phone_rejected_same_page_retry');
         }
 
         core.log?.(`🔁 Thử lấy số SMS mới và nhập lại ngay trên cùng trang verify (${attempt}/3), không thoát/login lại...`, 'WARNING');
@@ -1710,6 +1723,7 @@ ipcMain.handle('run:start', async (_event, payload) => {
     if (typeof originalGetValidSmsItem === 'function') {
       ChatGPTAccountCreatorCore.prototype.getValidSmsItem = async function patchedSamePageGetValidSmsItem(smsService, excludedOrderIds = [], incorrectOrderIds = [], exhaustedOrderIds = [], ...args) {
         this.__smsPhoneRetryContext = { smsService, excludedOrderIds, incorrectOrderIds, exhaustedOrderIds };
+        purgeUsedUpSmsItems(this, 'before_pick_candidate');
         const smsItem = await originalGetValidSmsItem.call(this, smsService, excludedOrderIds, incorrectOrderIds, exhaustedOrderIds, ...args);
         this.__smsCurrentStateItem = smsItem;
         this.__smsCurrentItem = smsItem ? { ...smsItem } : smsItem;
@@ -1726,6 +1740,14 @@ ipcMain.handle('run:start', async (_event, payload) => {
           stateItem.usageCount = Number(holder.usageCount || stateItem.usageCount || 0);
           stateItem.phoneNumber = holder.phoneNumber || stateItem.phoneNumber;
           stateItem.updatedAt = holder.updatedAt || stateItem.updatedAt || new Date().toISOString();
+        }
+        if (!this.__purgingUsedUpSmsItems) {
+          this.__purgingUsedUpSmsItems = true;
+          try {
+            purgeUsedUpSmsItems(this, 'before_save_state');
+          } finally {
+            this.__purgingUsedUpSmsItems = false;
+          }
         }
         return originalSaveSMSState.call(this, ...args);
       };
