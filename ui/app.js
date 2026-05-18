@@ -17,6 +17,9 @@ const el = {
   preflightSummaryText: document.getElementById('preflight-summary-text'),
   preflightList: document.getElementById('preflight-list'),
   smsKey: document.getElementById('sms-key-input'),
+  smsPoolCountry: document.getElementById('smspool-country-select'),
+  smsPoolCountryPriceNote: document.getElementById('smspool-country-price-note'),
+  smsPoolPriceNote: document.getElementById('smspool-price-note'),
   smsBalanceCard: document.getElementById('sms-balance-card'),
   smsBalanceValue: document.getElementById('sms-balance-value'),
   smsBalanceMeta: document.getElementById('sms-balance-meta'),
@@ -223,6 +226,7 @@ function initRuntimeInputs() {
     0,
     runtimeInputs.length,
     el.smsKey,
+    el.smsPoolCountry,
     el.smsBalanceCheckBtn,
     el.smsPoolOpenBtn,
     el.clonemupKey,
@@ -453,6 +457,37 @@ function setSaveConfigStatus(message = '', type = '') {
 
 function escapeAttr(text) {
   return escapeHtml(text).replaceAll('`', '&#96;');
+}
+
+function getSmsPoolCountryConfig(country = 1) {
+  const id = Number.parseInt(country, 10);
+  if (id === 12) {
+    return {
+      country: 12,
+      countryCode: 'PH',
+      dialCode: '+63',
+      service: 671,
+      maxPrice: 0.05,
+      priceRange: '$0.02 - $0.05',
+      label: 'Philippines • +63 • OpenAI service 671 • max $0.05/sim',
+    };
+  }
+  return {
+    country: 1,
+    countryCode: 'US',
+    dialCode: '+1',
+    service: 671,
+    maxPrice: 0.07,
+    priceRange: 'tối đa $0.07',
+    label: 'US • +1 • OpenAI service 671 • max $0.07/sim',
+  };
+}
+
+function syncSmsPoolCountryUi() {
+  const config = getSmsPoolCountryConfig(el.smsPoolCountry?.value || 1);
+  if (el.smsPoolCountry) el.smsPoolCountry.value = `${config.country}`;
+  if (el.smsPoolCountryPriceNote) el.smsPoolCountryPriceNote.textContent = `${config.label} • ${config.priceRange}`;
+  if (el.smsPoolPriceNote) el.smsPoolPriceNote.textContent = `${config.label} • ${config.priceRange}`;
 }
 
 function getStatusClass(status) {
@@ -965,6 +1000,8 @@ async function openDataFile(kind, label) {
 
 function renderRuntimeConfig(config = {}) {
   if (config.smspool_key !== undefined) el.smsKey.value = config.smspool_key || '';
+  if (el.smsPoolCountry) el.smsPoolCountry.value = `${getSmsPoolCountryConfig(config.smspool_country ?? 1).country}`;
+  syncSmsPoolCountryUi();
   if (config.password !== undefined) el.password.value = config.password || '';
   if (config.router_password !== undefined) el.routerPassword.value = config.router_password || '';
   if (el.verifyProvider && config.verify_provider !== undefined) el.verifyProvider.value = normalizeVerifyProvider(config.verify_provider);
@@ -1504,8 +1541,14 @@ async function refreshPreflight(logResult = false) {
 function getConfigPayload() {
   const selectedMailDomain = el.mode?.value === 'create_pay_unlink' ? 'gmail-shopgmail9999' : el.mailDomain.value.trim();
   const randomMailDomainChecked = el.mode?.value === 'create_pay_unlink' ? false : el.randomMailDomain?.checked === true;
+  const smsCountryConfig = getSmsPoolCountryConfig(el.smsPoolCountry?.value || 1);
   return {
     smspoolKey: el.smsKey.value.trim(),
+    smsPoolCountry: smsCountryConfig.country,
+    smsPoolCountryCode: smsCountryConfig.countryCode,
+    smsPoolDialCode: smsCountryConfig.dialCode,
+    smsPoolService: smsCountryConfig.service,
+    smsPoolMaxPrice: smsCountryConfig.maxPrice,
     clonemupApiKey: el.clonemupKey?.value.trim() || '',
     clonemupHotmailProductId: Math.max(1, Number.parseInt(el.clonemupProductId?.value || '7614', 10) || 7614),
     khommoApiKey: el.khommoKey?.value.trim() || '',
@@ -2029,6 +2072,7 @@ function bindEvents() {
   });
   el.smsKey?.addEventListener('change', () => refreshSmsPoolBalance({ silent: true }));
   el.smsKey?.addEventListener('blur', () => refreshSmsPoolBalance({ silent: true }));
+  el.smsPoolCountry?.addEventListener('change', syncSmsPoolCountryUi);
   el.smsBalanceCheckBtn?.addEventListener('click', () => refreshSmsPoolBalance({ silent: false }));
   el.smsPoolOpenBtn?.addEventListener('click', async () => {
     const result = await window.desktopAPI.openExternalUrl('https://www.smspool.net/');
@@ -2348,6 +2392,7 @@ async function initAuthenticatedState() {
 
 async function init() {
   initRuntimeInputs();
+  syncSmsPoolCountryUi();
   bindEvents();
   renderAuthState();
   renderUpdateState({
