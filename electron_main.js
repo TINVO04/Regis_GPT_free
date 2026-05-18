@@ -450,6 +450,39 @@ async function buyKhommoHotmailForRun({ apiKey = '', amount = 1, productId = 751
   return { ...append, result };
 }
 
+function removeAccountTxtEmail(email = '') {
+  const target = `${email || ''}`.trim().toLowerCase();
+  if (!target || !workspaceState?.accountsFile || !fs.existsSync(workspaceState.accountsFile)) return false;
+  const lines = fs.readFileSync(workspaceState.accountsFile, 'utf-8').split(/\r?\n/);
+  const nonEmptyLines = lines.filter((line) => line.trim());
+  const nextLines = nonEmptyLines.filter((line) => {
+    const [lineEmail] = line.split('|');
+    return `${lineEmail || ''}`.trim().toLowerCase() !== target;
+  });
+  const changed = nextLines.length !== nonEmptyLines.length;
+  if (changed) fs.writeFileSync(workspaceState.accountsFile, nextLines.length ? `${nextLines.join('\n')}\n` : '', 'utf-8');
+  return changed;
+}
+
+function rememberRemovedHotmail(email = '', reason = 'removed') {
+  const normalized = `${email || ''}`.trim().toLowerCase();
+  if (!normalized) return;
+  globalThis.__removedHotmailEmails = globalThis.__removedHotmailEmails || new Map();
+  globalThis.__removedHotmailEmails.set(normalized, { reason, removedAt: Date.now() });
+}
+
+function isRecentlyRemovedHotmail(email = '') {
+  const normalized = `${email || ''}`.trim().toLowerCase();
+  if (!normalized || !globalThis.__removedHotmailEmails) return false;
+  const item = globalThis.__removedHotmailEmails.get(normalized);
+  if (!item) return false;
+  if (Date.now() - Number(item.removedAt || 0) > 30 * 60 * 1000) {
+    globalThis.__removedHotmailEmails.delete(normalized);
+    return false;
+  }
+  return true;
+}
+
 function removeHotmailOnOtpExhaustedLog(line = '') {
   const text = `${line || ''}`;
   const match = text.match(/Hotmail code\/messages API không lấy được OTP cho\s+([^\s]+)\s+sau\s+(\d+)\/(\d+)\s+lần thử/i);
@@ -458,12 +491,14 @@ function removeHotmailOnOtpExhaustedLog(line = '') {
   const attempts = Number.parseInt(attemptText, 10) || 0;
   const maxRetries = Number.parseInt(maxText, 10) || 0;
   if (!email || attempts < maxRetries || maxRetries < 5) return false;
-  const removed = getHotmailRepository().deleteAccount(email);
-  if (removed) {
-    sendToRenderer('log:line', { line: `[Hotmail] Đã loại ${email} khỏi accounts-hotmail.txt vì chờ OTP hết ${attempts}/${maxRetries} vẫn không có.` });
+  const removedHotmail = getHotmailRepository().deleteAccount(email);
+  const removedAccount = removeAccountTxtEmail(email);
+  if (removedHotmail || removedAccount) {
+    rememberRemovedHotmail(email, 'otp_exhausted_log');
+    sendToRenderer('log:line', { line: `[Hotmail] Đã loại ${email} khỏi ${removedHotmail ? 'accounts-hotmail.txt' : ''}${removedHotmail && removedAccount ? ' và ' : ''}${removedAccount ? 'accounts.txt' : ''} vì chờ OTP hết ${attempts}/${maxRetries} vẫn không có.` });
     sendToRenderer('data:changed', readWorkspaceData());
   }
-  return removed;
+  return removedHotmail || removedAccount;
 }
 
 function maskSecret(value, visible = 6) {
@@ -1601,19 +1636,7 @@ ipcMain.handle('run:start', async (_event, payload) => {
   const patchHotmailOtpHandling = () => {
     if (ChatGPTAccountCreatorCore.prototype.__hotmailOtpHandlingPatched) return;
 
-    const removeAccountTxtPending = (email = '') => {
-      const target = `${email || ''}`.trim().toLowerCase();
-      if (!target || !fs.existsSync(workspaceState.accountsFile)) return false;
-      const lines = fs.readFileSync(workspaceState.accountsFile, 'utf-8').split(/\r?\n/);
-      const nextLines = lines.filter((line) => {
-        if (!line.trim()) return false;
-        const [lineEmail] = line.split('|');
-        return `${lineEmail || ''}`.trim().toLowerCase() !== target;
-      });
-      const changed = nextLines.length !== lines.filter((line) => line.trim()).length;
-      if (changed) fs.writeFileSync(workspaceState.accountsFile, nextLines.length ? `${nextLines.join('\n')}\n` : '', 'utf-8');
-      return changed;
-    };
+    const removeAccountTxtPending = removeAccountTxtEmail;
 
     const originalRemoveHotmailAccount = ChatGPTAccountCreatorCore.prototype.removeHotmailAccount;
     if (typeof originalRemoveHotmailAccount === 'function') {
@@ -1621,6 +1644,7 @@ ipcMain.handle('run:start', async (_event, payload) => {
         const result = originalRemoveHotmailAccount.call(this, email, ...args);
         const removedFromAccounts = removeAccountTxtPending(email);
         if (result || removedFromAccounts) {
+          rememberRemovedHotmail(email, 'removeHotmailAccount');
           sendToRenderer('log:line', { line: `[Hotmail] Đã bỏ ${email} khỏi danh sách ${result ? 'accounts-hotmail.txt' : ''}${result && removedFromAccounts ? ' và ' : ''}${removedFromAccounts ? 'accounts.txt' : ''} để chuyển sang Hotmail mới.` });
           sendToRenderer('data:changed', readWorkspaceData());
         }
@@ -1636,13 +1660,20 @@ ipcMain.handle('run:start', async (_event, payload) => {
         const isVerifyFlow = currentMode === 'verify';
         const email = `${hotmailAccount?.email || hotmailAccount || ''}`.trim();
 
+        if (isRecentlyRemovedHotmail(email) || (email && !getHotmailRepository().findByEmail(email))) {
+          this.log?.(`[Hotmail] ${email} đã bị loại khỏi accounts-hotmail.txt trước đó, dừng retry OTP cho mail này ngay để tránh chạy lặp.`, 'WARNING');
+          removeAccountTxtPending(email);
+          return null;
+        }
+
         const firstCode = await originalGetHotmailOauthCode.call(this, hotmailAccount, ...args);
         if (firstCode || !email) return firstCode;
 
         if (isCreateFlow) {
           this.log?.(`[Hotmail] Create: ${email} hết OTP 7/7, bỏ mail này ngay và chuyển sang Hotmail mới, không login/chờ lại.`, 'WARNING');
           if (typeof this.removeHotmailAccount === 'function') this.removeHotmailAccount(email);
-          return null;
+          rememberRemovedHotmail(email, 'create_hotmail_otp_failed');
+          throw new Error(`HOTMAIL_OTP_EXHAUSTED:${email}`);
         }
 
         if (isVerifyFlow) {
@@ -1651,7 +1682,8 @@ ipcMain.handle('run:start', async (_event, payload) => {
           if (secondCode) return secondCode;
           this.log?.(`[Hotmail] Verify: ${email} vẫn không có OTP sau retry, bỏ mail này và chuyển sang Hotmail mới.`, 'WARNING');
           if (typeof this.removeHotmailAccount === 'function') this.removeHotmailAccount(email);
-          return null;
+          rememberRemovedHotmail(email, 'verify_hotmail_otp_failed');
+          throw new Error(`HOTMAIL_OTP_EXHAUSTED:${email}`);
         }
 
         return null;
@@ -2219,7 +2251,24 @@ ipcMain.handle('run:start', async (_event, payload) => {
       if (runtimeProvider === 'cliproxyapi' && typeof ChatGPTAccountCreatorCore.prototype.__cliProxyApiRefreshBeforeVerify === 'function') {
         await ChatGPTAccountCreatorCore.prototype.__cliProxyApiRefreshBeforeVerify();
       }
-      return originalVerifyWithRetry.apply(this, args);
+      const email = `${args?.[0] || ''}`.trim();
+      if (isRecentlyRemovedHotmail(email) || (email && /@(hotmail|outlook|live)\./i.test(email) && !getHotmailRepository().findByEmail(email))) {
+        removeAccountTxtEmail(email);
+        this.log?.(`[Hotmail] ${email} không còn trong accounts-hotmail.txt, bỏ qua verify/retry để chuyển account khác.`, 'WARNING');
+        return false;
+      }
+      try {
+        return await originalVerifyWithRetry.apply(this, args);
+      } catch (error) {
+        if (`${error?.message || ''}`.startsWith('HOTMAIL_OTP_EXHAUSTED:')) {
+          const exhaustedEmail = `${error.message.split(':')[1] || email}`.trim();
+          removeAccountTxtEmail(exhaustedEmail);
+          rememberRemovedHotmail(exhaustedEmail, 'verifyWithRetry_hotmail_otp_exhausted');
+          this.log?.(`[Hotmail] ${exhaustedEmail} đã hết OTP email và đã bị loại. Dừng retry mail này ngay.`, 'WARNING');
+          return false;
+        }
+        throw error;
+      }
     };
 
     const originalAddCodexTo9Router = ChatGPTAccountCreatorCore.prototype.addCodexTo9Router;
