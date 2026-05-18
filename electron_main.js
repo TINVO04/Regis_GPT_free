@@ -1258,6 +1258,14 @@ function patchPlaywrightLaunchVisibility({ headless = false, minimize = false } 
   globalThis.__codexBrowserHeadless = headless === true;
   globalThis.__codexBrowserStartMinimized = headless !== true && minimize === true;
 
+  const minimizeBrowserWindowsSoon = (label = 'browser') => {
+    if (process.platform !== 'win32' || globalThis.__codexBrowserStartMinimized !== true) return;
+    const command = 'powershell -NoProfile -ExecutionPolicy Bypass -Command "$code = @\'\nusing System;\nusing System.Text;\nusing System.Runtime.InteropServices;\npublic class WinMin {\n  public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);\n  [DllImport(\"user32.dll\")] public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);\n  [DllImport(\"user32.dll\")] public static extern bool IsWindowVisible(IntPtr hWnd);\n  [DllImport(\"user32.dll\")] public static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int count);\n  [DllImport(\"user32.dll\")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);\n  public static void Run() {\n    EnumWindows((hWnd, lParam) => {\n      if (!IsWindowVisible(hWnd)) return true;\n      var sb = new StringBuilder(512);\n      GetWindowText(hWnd, sb, sb.Capacity);\n      var title = sb.ToString();\n      if (title.Contains(\"ChatGPT\") || title.Contains(\"OpenAI\") || title.Contains(\"auth.openai.com\")) ShowWindowAsync(hWnd, 6);\n      return true;\n    }, IntPtr.Zero);\n  }\n}\n\'@; Add-Type $code; for ($i=0; $i -lt 20; $i++) { [WinMin]::Run(); Start-Sleep -Milliseconds 250 }"';
+    const child = spawn(command, { shell: true, windowsHide: true, stdio: 'ignore' });
+    child.once('error', (error) => sendToRenderer('log:line', { line: `[Browser] Không minimize được ${label}: ${error.message}` }));
+    child.unref?.();
+  };
+
   const buildLaunchOptions = (options = {}) => {
     const forceHeadless = globalThis.__codexBrowserHeadless === true;
     const startMinimized = globalThis.__codexBrowserStartMinimized === true;
@@ -1281,15 +1289,19 @@ function patchPlaywrightLaunchVisibility({ headless = false, minimize = false } 
 
     if (typeof browserType.launchPersistentContext === 'function') {
       const originalLaunchPersistentContext = browserType.launchPersistentContext;
-      browserType.launchPersistentContext = function patchedLaunchPersistentContext(userDataDir, options = {}) {
-        return originalLaunchPersistentContext.call(this, userDataDir, buildLaunchOptions(options));
+      browserType.launchPersistentContext = async function patchedLaunchPersistentContext(userDataDir, options = {}) {
+        const context = await originalLaunchPersistentContext.call(this, userDataDir, buildLaunchOptions(options));
+        minimizeBrowserWindowsSoon(label);
+        return context;
       };
     }
 
     if (typeof browserType.launch === 'function') {
       const originalLaunch = browserType.launch;
-      browserType.launch = function patchedLaunch(options = {}) {
-        return originalLaunch.call(this, buildLaunchOptions(options));
+      browserType.launch = async function patchedLaunch(options = {}) {
+        const browser = await originalLaunch.call(this, buildLaunchOptions(options));
+        minimizeBrowserWindowsSoon(label);
+        return browser;
       };
     }
 
