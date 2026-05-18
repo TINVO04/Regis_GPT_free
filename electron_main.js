@@ -1254,29 +1254,30 @@ function stopCliProxyApiCapture(captureProcess) {
   }
 }
 
-function patchPlaywrightLaunchVisibility({ headless = false } = {}) {
+function patchPlaywrightLaunchVisibility({ headless = false, minimize = false } = {}) {
   globalThis.__codexBrowserHeadless = headless === true;
+  globalThis.__codexBrowserStartMinimized = headless !== true && minimize === true;
 
   const buildLaunchOptions = (options = {}) => {
     const forceHeadless = globalThis.__codexBrowserHeadless === true;
+    const startMinimized = globalThis.__codexBrowserStartMinimized === true;
     const currentArgs = [].concat(options?.args || []);
-    const hiddenArgs = forceHeadless
+    const minimizedArgs = startMinimized
       ? [
-        '--window-position=-32000,-32000',
         '--start-minimized',
+        '--window-position=-32000,-32000',
         '--disable-features=CalculateNativeWinOcclusion',
-        '--no-startup-window',
       ]
       : [];
     return {
       ...options,
-      headless: forceHeadless ? true : options?.headless,
-      args: [...new Set([...currentArgs, ...hiddenArgs])],
+      headless: forceHeadless ? true : false,
+      args: [...new Set([...currentArgs, ...minimizedArgs])],
     };
   };
 
-  const forceHeadlessLaunch = (browserType, label = 'browser') => {
-    if (!browserType || browserType.__codexHeadlessLaunchPatched) return;
+  const patchLaunch = (browserType, label = 'browser') => {
+    if (!browserType || browserType.__codexLaunchVisibilityPatched) return;
 
     if (typeof browserType.launchPersistentContext === 'function') {
       const originalLaunchPersistentContext = browserType.launchPersistentContext;
@@ -1292,23 +1293,23 @@ function patchPlaywrightLaunchVisibility({ headless = false } = {}) {
       };
     }
 
-    browserType.__codexHeadlessLaunchPatched = true;
-    sendToRenderer('log:line', { line: `[Browser] Đã patch ${label} launch/launchPersistentContext để ép headless khi bật checkbox.` });
+    browserType.__codexLaunchVisibilityPatched = true;
+    sendToRenderer('log:line', { line: `[Browser] Đã patch ${label}: Headless ẩn hoàn toàn hoặc Minimize thu nhỏ ngay theo checkbox.` });
   };
 
   try {
     const playwright = require('playwright');
-    forceHeadlessLaunch(playwright?.chromium, 'Playwright Chromium');
-    forceHeadlessLaunch(playwright?.firefox, 'Playwright Firefox/Nightly');
+    patchLaunch(playwright?.chromium, 'Playwright Chromium');
+    patchLaunch(playwright?.firefox, 'Playwright Firefox/Nightly');
   } catch (error) {
-    sendToRenderer('log:line', { line: `[Browser] Không patch được Playwright headless: ${error.message}` });
+    sendToRenderer('log:line', { line: `[Browser] Không patch được Playwright minimize: ${error.message}` });
   }
 
   try {
     const playwrightExtra = require('playwright-extra');
-    forceHeadlessLaunch(playwrightExtra?.chromium, 'Playwright Extra Chromium');
+    patchLaunch(playwrightExtra?.chromium, 'Playwright Extra Chromium');
   } catch (error) {
-    sendToRenderer('log:line', { line: `[Browser] Không patch được Playwright Extra headless: ${error.message}` });
+    sendToRenderer('log:line', { line: `[Browser] Không patch được Playwright Extra minimize: ${error.message}` });
   }
 }
 
@@ -1331,6 +1332,7 @@ function normalizeConfigPatch(payload = {}) {
     selected_mail_domain: keepLowerString(payload?.selectedMailDomain, current.selected_mail_domain, 'thangterter.online'),
     random_mail_domain: payload?.randomMailDomain === true,
     headless: payload?.headless === true,
+    browser_minimize: payload?.headless === true ? false : payload?.browserMinimize === true,
     tinyhost_domain: keepLowerString(payload?.tinyhostDomain, current.tinyhost_domain, 'tinyhost.shop'),
     router_password: keepString(payload?.routerPassword, current.router_password, '123456'),
     proxy_round_robin: payload?.proxyRoundRobin === true,
@@ -1480,6 +1482,7 @@ ipcMain.handle('run:start', async (_event, payload) => {
   const randomMailDomain = isCreatePayUnlinkMode ? false : payload?.randomMailDomain === true;
   const tinyhostDomain = `${payload?.tinyhostDomain || savedConfig.tinyhost_domain || 'tinyhost.shop'}`.trim().toLowerCase();
   const headless = payload?.headless === true;
+  const browserMinimize = headless ? false : payload?.browserMinimize === true;
   const shopgmail9999ApiKey = `${payload?.shopgmail9999ApiKey || ''}`.trim();
   const clonemupApiKey = `${payload?.clonemupApiKey || savedConfig.clonemup_api_key || ''}`.trim();
   const createPayUnlinkStage = `${payload?.createPayUnlinkStage || 'stage1'}`.trim().toLowerCase();
@@ -1976,7 +1979,7 @@ ipcMain.handle('run:start', async (_event, payload) => {
   }
   persistWorkspaceConfig(normalizeConfigPatch(configPayload));
   MailOtpService.TINYHOST_SELECTED_DOMAIN = tinyhostDomain;
-  patchPlaywrightLaunchVisibility({ headless });
+  patchPlaywrightLaunchVisibility({ headless, minimize: browserMinimize });
 
   const nextPreflight = refreshPreflightState();
   if (!nextPreflight.canRun) {
@@ -2037,6 +2040,7 @@ ipcMain.handle('run:start', async (_event, payload) => {
     selectedMailDomain,
     randomMailDomain,
     headless,
+    browserMinimize,
     tinyhostDomain,
     shopgmail9999ApiKey,
     clonemupApiKey,
