@@ -1,6 +1,7 @@
-import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
-import electronUpdater from 'electron-updater';
-const { autoUpdater } = electronUpdater;
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
+const { autoUpdater } = require('electron-updater');
 import fs from 'fs';
 import http from 'http';
 import https from 'https';
