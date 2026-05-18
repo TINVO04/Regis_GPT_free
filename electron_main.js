@@ -1624,6 +1624,7 @@ ipcMain.handle('run:start', async (_event, payload) => {
   let cliProxyApiAuthUrl = '';
   let cliProxyApiCaptureProcess = null;
   const needsVerifyProvider = mode === 'verify' || mode === 'create_verify' || (isCreatePayUnlinkMode && createPayUnlinkStage === 'stage4');
+  const shouldPreCaptureCliProxyApi = mode === 'verify' || (isCreatePayUnlinkMode && createPayUnlinkStage === 'stage4');
 
   if (Number.isNaN(count) || count <= 0) {
     return { ok: false, message: 'Số lượng phải lớn hơn 0.' };
@@ -2318,7 +2319,11 @@ ipcMain.handle('run:start', async (_event, payload) => {
   if (needsVerifyProvider && verifyProvider === 'cliproxyapi') {
     try {
       patchCliProxyApiCoreRetry();
-      await captureFreshCliProxyApiAuthUrl('account 1');
+      if (shouldPreCaptureCliProxyApi) {
+        await captureFreshCliProxyApiAuthUrl('account 1');
+      } else {
+        sendToRenderer('log:line', { line: '[CLIProxyAPI] Create+Verify: chưa bắt OAuth URL ở bước create. OAuth chỉ được bắt khi bắt đầu verify/Codex để không mở Chrome/OAuth sớm.' });
+      }
     } catch (error) {
       stopCliProxyApiCapture(cliProxyApiCaptureProcess);
       return { ok: false, message: error.message || 'Không lấy được OAuth URL từ CLIProxyAPI.' };
@@ -2501,7 +2506,7 @@ ipcMain.handle('run:start', async (_event, payload) => {
     let forced = false;
 
     for (let accountIndex = 1; accountIndex <= count; accountIndex += 1) {
-      if (accountIndex > 1) {
+      if (shouldPreCaptureCliProxyApi && accountIndex > 1) {
         await captureFreshCliProxyApiAuthUrl(`account ${accountIndex}`);
       }
 
