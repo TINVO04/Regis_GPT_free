@@ -1254,6 +1254,45 @@ function stopCliProxyApiCapture(captureProcess) {
   }
 }
 
+function patchPlaywrightLaunchVisibility({ headless = false } = {}) {
+  globalThis.__codexBrowserHeadless = headless === true;
+
+  const forceHeadlessLaunch = (browserType, label = 'browser') => {
+    if (!browserType || browserType.__codexHeadlessLaunchPatched || typeof browserType.launchPersistentContext !== 'function') return;
+    const originalLaunchPersistentContext = browserType.launchPersistentContext;
+    browserType.launchPersistentContext = function patchedLaunchPersistentContext(userDataDir, options = {}) {
+      const forceHeadless = globalThis.__codexBrowserHeadless === true;
+      const currentArgs = [].concat(options?.args || []);
+      const hiddenArgs = forceHeadless
+        ? ['--window-position=-32000,-32000', '--start-minimized', '--disable-features=CalculateNativeWinOcclusion']
+        : [];
+      const nextOptions = {
+        ...options,
+        headless: forceHeadless ? true : options?.headless,
+        args: [...new Set([...currentArgs, ...hiddenArgs])],
+      };
+      return originalLaunchPersistentContext.call(this, userDataDir, nextOptions);
+    };
+    browserType.__codexHeadlessLaunchPatched = true;
+    sendToRenderer('log:line', { line: `[Browser] Đã patch ${label} để có thể ép headless khi bật checkbox.` });
+  };
+
+  try {
+    const playwright = require('playwright');
+    forceHeadlessLaunch(playwright?.chromium, 'Playwright Chromium');
+    forceHeadlessLaunch(playwright?.firefox, 'Playwright Firefox/Nightly');
+  } catch (error) {
+    sendToRenderer('log:line', { line: `[Browser] Không patch được Playwright headless: ${error.message}` });
+  }
+
+  try {
+    const playwrightExtra = require('playwright-extra');
+    forceHeadlessLaunch(playwrightExtra?.chromium, 'Playwright Extra Chromium');
+  } catch (error) {
+    sendToRenderer('log:line', { line: `[Browser] Không patch được Playwright Extra headless: ${error.message}` });
+  }
+}
+
 function normalizeConfigPatch(payload = {}) {
   const current = readJsonFile(workspaceState.configFile, {});
   const keepString = (value, currentValue = '', fallback = '') => {
@@ -1918,6 +1957,7 @@ ipcMain.handle('run:start', async (_event, payload) => {
   }
   persistWorkspaceConfig(normalizeConfigPatch(configPayload));
   MailOtpService.TINYHOST_SELECTED_DOMAIN = tinyhostDomain;
+  patchPlaywrightLaunchVisibility({ headless });
 
   const nextPreflight = refreshPreflightState();
   if (!nextPreflight.canRun) {
