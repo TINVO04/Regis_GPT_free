@@ -1,20 +1,6 @@
 export class SMSPoolService {
-  static defaultPurchaseOptions = {
-    service: 671,
-    country: 1,
-    maxPrice: 0.07,
-  };
-
-  static setDefaultPurchaseOptions(options = {}) {
-    const service = Number.parseInt(options.service ?? SMSPoolService.defaultPurchaseOptions.service, 10) || 671;
-    const country = Number.parseInt(options.country ?? SMSPoolService.defaultPurchaseOptions.country, 10) || 1;
-    const maxPrice = Number.parseFloat(options.maxPrice ?? SMSPoolService.defaultPurchaseOptions.maxPrice) || 0.07;
-    SMSPoolService.defaultPurchaseOptions = { service, country, maxPrice };
-  }
-
-  constructor(apiKey, options = {}) {
+  constructor(apiKey) {
     this.apiKey = apiKey;
-    this.purchaseOptions = { ...SMSPoolService.defaultPurchaseOptions, ...options };
   }
 
   isStopped(shouldStop) {
@@ -71,16 +57,7 @@ export class SMSPoolService {
   }
 
   async buyNumber(shouldStop = () => false) {
-    const service = Number.parseInt(this.purchaseOptions?.service ?? 671, 10) || 671;
-    const country = Number.parseInt(this.purchaseOptions?.country ?? 1, 10) || 1;
-    const maxPrice = Number.parseFloat(this.purchaseOptions?.maxPrice ?? 0.07) || 0.07;
-    const params = new URLSearchParams({
-      key: this.apiKey,
-      service: `${service}`,
-      country: `${country}`,
-      max_price: `${maxPrice}`,
-    });
-    const url = `https://api.smspool.net/purchase/sms?${params.toString()}`;
+    const url = `https://api.smspool.net/purchase/sms?key=${this.apiKey}&service=671&country=1&max_price=0.07`;
     try {
       const res = await this.fetchJson(url, { timeoutMs: 15000, shouldStop });
       if (res.success) {

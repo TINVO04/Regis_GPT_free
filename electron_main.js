@@ -139,11 +139,6 @@ function ensureWorkspaceFiles(state) {
         slow_mo: 1000,
         timeout: 30000,
         password: '@1234567890a',
-        smspool_country: 1,
-        smspool_country_code: 'US',
-        smspool_dial_code: '+1',
-        smspool_service: 671,
-        smspool_max_price: 0.07,
         router_password: '123456',
         selected_mail_domain: 'thangterter.online',
         random_mail_domain: false,
@@ -1387,17 +1382,8 @@ function normalizeConfigPatch(payload = {}) {
     return text || `${currentValue ?? ''}`.trim();
   };
 
-  const normalizeSmsPoolCountry = (value) => ([1, 12].includes(Number.parseInt(value, 10)) ? Number.parseInt(value, 10) : 1);
-  const smsPoolCountry = normalizeSmsPoolCountry(payload?.smsPoolCountry ?? current.smspool_country ?? 1);
-  const smsPoolMaxPrice = smsPoolCountry === 12 ? 0.05 : 0.07;
-
   return {
     smspool_key: keepSecret(payload?.smspoolKey, current.smspool_key),
-    smspool_country: smsPoolCountry,
-    smspool_country_code: smsPoolCountry === 12 ? 'PH' : 'US',
-    smspool_dial_code: smsPoolCountry === 12 ? '+63' : '+1',
-    smspool_service: 671,
-    smspool_max_price: smsPoolMaxPrice,
     password: keepString(payload?.password, current.password, '@1234567890a'),
     selected_mail_domain: keepLowerString(payload?.selectedMailDomain, current.selected_mail_domain, 'thangterter.online'),
     random_mail_domain: payload?.randomMailDomain === true,
@@ -1614,14 +1600,6 @@ ipcMain.handle('run:start', async (_event, payload) => {
   const mode = payload?.mode || 'create_verify';
   const savedConfig = readJsonFile(workspaceState.configFile, {});
   const smspoolKey = (payload?.smspoolKey || '').trim();
-  const smsPoolCountry = [1, 12].includes(Number.parseInt(payload?.smsPoolCountry ?? savedConfig.smspool_country ?? 1, 10))
-    ? Number.parseInt(payload?.smsPoolCountry ?? savedConfig.smspool_country ?? 1, 10)
-    : 1;
-  const smsPoolCountryCode = smsPoolCountry === 12 ? 'PH' : 'US';
-  const smsPoolDialCode = smsPoolCountry === 12 ? '+63' : '+1';
-  const smsPoolService = 671;
-  const smsPoolMaxPrice = smsPoolCountry === 12 ? 0.05 : 0.07;
-  SMSPoolService.setDefaultPurchaseOptions({ service: smsPoolService, country: smsPoolCountry, maxPrice: smsPoolMaxPrice });
   const password = (payload?.password || '').trim();
   const routerPassword = `${payload?.routerPassword || ''}`.trim();
   const vpnEnabled = payload?.vpnEnabled !== false;
@@ -1653,10 +1631,6 @@ ipcMain.handle('run:start', async (_event, payload) => {
 
   if ((mode === 'verify' || mode === 'create_verify' || (isCreatePayUnlinkMode && createPayUnlinkStage === 'stage4')) && !smspoolKey) {
     return { ok: false, message: 'Mode có verify hoặc Mode 4 Stage 4 cần SMSPool API key để xác minh phone/9Router.' };
-  }
-
-  if (mode === 'verify' || mode === 'create_verify' || (isCreatePayUnlinkMode && createPayUnlinkStage === 'stage4')) {
-    sendToRenderer('log:line', { line: `[SMSPool] Country=${smsPoolCountryCode} (${smsPoolDialCode}), service=OpenAI/ChatGPT ${smsPoolService}, max_price=$${smsPoolMaxPrice.toFixed(2)}.` });
   }
 
   const patchHotmailOtpHandling = () => {
@@ -2467,11 +2441,6 @@ ipcMain.handle('run:start', async (_event, payload) => {
     count: runCount,
     mode,
     smspoolKey,
-    smsPoolCountry,
-    smsPoolCountryCode,
-    smsPoolDialCode,
-    smsPoolService,
-    smsPoolMaxPrice,
     password,
     routerPassword,
     selectedMailDomain: selectedMailDomain === 'hotmail-khommo' ? 'hotmail' : selectedMailDomain,
