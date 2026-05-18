@@ -418,6 +418,38 @@ function getHotmailRunnableCount() {
   return getHotmailRepository().countRunnable();
 }
 
+async function buyKhommoHotmailForRun({ apiKey = '', amount = 1, productId = 7511, reason = 'run', status = 'mail_ready' } = {}) {
+  const safeApiKey = `${apiKey || ''}`.trim();
+  const safeAmount = Math.max(1, Number.parseInt(amount, 10) || 0);
+  const requestedProductId = Number.parseInt(productId, 10);
+  const safeProductId = [7511, 6000].includes(requestedProductId) ? requestedProductId : 7511;
+  if (!safeApiKey) throw new Error('Thiếu Khommo API key để tự mua Hotmail.');
+  const service = new KhommoService(safeApiKey);
+  sendToRenderer('log:line', { line: `[Khommo] ${reason}: tự mua ${safeAmount} Hotmail product=${safeProductId} vì chưa đủ mail_ready.` });
+  const result = await service.buyProductInBatches({
+    totalAmount: safeAmount,
+    productId: safeProductId,
+    batchSize: safeAmount,
+    onProgress: (event) => {
+      if (event.type === 'batch-start') sendToRenderer('log:line', { line: `[Khommo] Auto-buy batch ${event.batchIndex}/${event.totalBatches}, amount=${event.amount}, attempt=${event.attempt}` });
+      if (event.type === 'batch-success') sendToRenderer('log:line', { line: `[Khommo] Auto-buy OK, nhận ${event.received}, trans=${event.transId || 'n/a'}` });
+      if (event.type === 'batch-error') sendToRenderer('log:line', { line: `[Khommo] Auto-buy lỗi: ${event.message}` });
+    },
+  });
+  const repo = getHotmailRepository();
+  const append = repo.appendPurchasedAccounts(result.lines);
+  const normalizedStatus = repo.normalizeStatus(status || 'mail_ready', 'mail_ready');
+  if (append.added.length > 0 && normalizedStatus !== 'mail_ready') {
+    append.added.forEach((row) => repo.updateAccountStatus(row.email, normalizedStatus));
+  }
+  sendToRenderer('data:changed', readWorkspaceData());
+  if (append.rejected.length > 0) {
+    sendToRenderer('log:line', { line: `[Khommo] Auto-buy có ${append.rejected.length} dòng bị bỏ qua do thiếu OAuth fields.` });
+  }
+  sendToRenderer('log:line', { line: `[Khommo] Auto-buy đã thêm ${append.added.length}/${safeAmount} Hotmail vào accounts-hotmail.txt với status=${normalizedStatus}.` });
+  return { ...append, result };
+}
+
 function removeHotmailOnOtpExhaustedLog(line = '') {
   const text = `${line || ''}`;
   const match = text.match(/Hotmail code\/messages API không lấy được OTP cho\s+([^\s]+)\s+sau\s+(\d+)\/(\d+)\s+lần thử/i);
@@ -1394,29 +1426,11 @@ ipcMain.handle('khommo:get-profile', async (_event, payload) => {
   if (!apiKey) return { ok: false, message: 'Thiếu Khommo API key.' };
   try {
     const service = new KhommoService(apiKey);
-    const [profile, productList] = await Promise.all([
-      service.getProfile(),
-      service.getProducts().catch(() => null),
-    ]);
-    const products = await Promise.all([7511, 6000].map(async (productId) => {
-      try {
-        const listItem = productList?.products?.find((item) => `${item.id ?? item.product_id ?? item.product ?? item.pid ?? ''}`.trim() === `${productId}`);
-        const detail = await service.getProduct(productId).catch(() => null);
-        const info = service.extractProductInfo(detail?.raw || listItem || {}, productId);
-        const listInfo = listItem ? service.extractProductInfo(listItem, productId) : null;
-        const mergedInfo = {
-          ...listInfo,
-          ...info,
-          price: info.price || listInfo?.price || '',
-          stock: info.stock || listInfo?.stock || '',
-          name: info.name || listInfo?.name || '',
-          summary: info.summary || listInfo?.summary || '',
-        };
-        return { ok: true, productId, ...mergedInfo, summary: mergedInfo.summary, raw: detail?.raw || listItem || null };
-      } catch (error) {
-        return { ok: false, productId, message: error.message || 'Không đọc được product Khommo.' };
-      }
-    }));
+    const profile = await service.getProfile();
+    const products = [
+      { ok: true, productId: 7511, id: '7511', price: '196', stock: '', name: 'Hotmail OAuth', summary: '7511 • Hotmail OAuth • 196đ/acc • còn dùng' },
+      { ok: true, productId: 6000, id: '6000', price: '350', stock: '', name: 'Hotmail OAuth', summary: '6000 • Hotmail OAuth • 350đ/acc' },
+    ];
     return { ok: true, balance: profile.balance, raw: profile.raw, products, checkedAt: new Date().toISOString(), hotmailRunnableCount: getHotmailRunnableCount() };
   } catch (error) {
     return { ok: false, message: error.message || 'Không kiểm tra được số dư Khommo.' };
@@ -1587,12 +1601,27 @@ ipcMain.handle('run:start', async (_event, payload) => {
   const patchHotmailOtpHandling = () => {
     if (ChatGPTAccountCreatorCore.prototype.__hotmailOtpHandlingPatched) return;
 
+    const removeAccountTxtPending = (email = '') => {
+      const target = `${email || ''}`.trim().toLowerCase();
+      if (!target || !fs.existsSync(workspaceState.accountsFile)) return false;
+      const lines = fs.readFileSync(workspaceState.accountsFile, 'utf-8').split(/\r?\n/);
+      const nextLines = lines.filter((line) => {
+        if (!line.trim()) return false;
+        const [lineEmail] = line.split('|');
+        return `${lineEmail || ''}`.trim().toLowerCase() !== target;
+      });
+      const changed = nextLines.length !== lines.filter((line) => line.trim()).length;
+      if (changed) fs.writeFileSync(workspaceState.accountsFile, nextLines.length ? `${nextLines.join('\n')}\n` : '', 'utf-8');
+      return changed;
+    };
+
     const originalRemoveHotmailAccount = ChatGPTAccountCreatorCore.prototype.removeHotmailAccount;
     if (typeof originalRemoveHotmailAccount === 'function') {
       ChatGPTAccountCreatorCore.prototype.removeHotmailAccount = function patchedRemoveHotmailAccount(email, ...args) {
         const result = originalRemoveHotmailAccount.call(this, email, ...args);
-        if (result) {
-          sendToRenderer('log:line', { line: `[Hotmail] Đã bỏ ${email} khỏi danh sách để chuyển sang Hotmail mới.` });
+        const removedFromAccounts = removeAccountTxtPending(email);
+        if (result || removedFromAccounts) {
+          sendToRenderer('log:line', { line: `[Hotmail] Đã bỏ ${email} khỏi danh sách ${result ? 'accounts-hotmail.txt' : ''}${result && removedFromAccounts ? ' và ' : ''}${removedFromAccounts ? 'accounts.txt' : ''} để chuyển sang Hotmail mới.` });
           sendToRenderer('data:changed', readWorkspaceData());
         }
         return result;
@@ -2130,6 +2159,39 @@ ipcMain.handle('run:start', async (_event, payload) => {
   }
   persistWorkspaceConfig(normalizeConfigPatch(configPayload));
   patchPlaywrightLaunchVisibility({ headless });
+
+  if ((mode === 'create' || mode === 'create_verify') && selectedMailDomain === 'hotmail-khommo') {
+    const repo = getHotmailRepository();
+    const readyCount = repo.getReadyMailAccounts().length;
+    const pendingCount = repo.getPendingAccounts().length;
+    const neededStatus = mode === 'create_verify' ? 'pending' : 'mail_ready';
+    const availableCount = mode === 'create_verify' ? pendingCount : readyCount;
+    const missingCount = Math.max(0, count - availableCount);
+    if (missingCount > 0) {
+      const khommoProductId = [7511, 6000].includes(Number.parseInt(payload?.khommoHotmailProductId ?? savedConfig.khommo_hotmail_product_id ?? 7511, 10))
+        ? Number.parseInt(payload?.khommoHotmailProductId ?? savedConfig.khommo_hotmail_product_id ?? 7511, 10)
+        : 7511;
+      try {
+        const purchased = await buyKhommoHotmailForRun({
+          apiKey: clonemupApiKey,
+          amount: missingCount,
+          productId: khommoProductId,
+          reason: `RUN ${mode}`,
+          status: neededStatus,
+        });
+        if (purchased.added.length < missingCount) {
+          stopCliProxyApiCapture(cliProxyApiCaptureProcess);
+          return { ok: false, message: `Khommo chỉ mua được ${purchased.added.length}/${missingCount} Hotmail cần thêm cho status=${neededStatus}.`, ...readWorkspaceData() };
+        }
+        if (mode === 'create_verify') {
+          sendToRenderer('log:line', { line: `[Khommo] RUN create_verify đang cần account pending để verify. Đã mua mail mới và set pending để core không lấy email cũ trong accounts.txt.` });
+        }
+      } catch (error) {
+        stopCliProxyApiCapture(cliProxyApiCaptureProcess);
+        return { ok: false, message: error.message || 'Không tự mua được Hotmail Khommo trước khi RUN.', ...readWorkspaceData() };
+      }
+    }
+  }
 
   const nextPreflight = refreshPreflightState();
   if (!nextPreflight.canRun) {

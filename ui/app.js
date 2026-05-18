@@ -483,32 +483,24 @@ function syncClonemupProductUi(options = {}) {
   }
 }
 
-function formatKhommoProductLabel(product = {}) {
-  const productId = product.productId || product.id || '';
-  const price = product.price ? `${product.price}đ` : 'giá n/a';
-  const stock = product.stock !== undefined && product.stock !== null && `${product.stock}`.trim() !== '' ? `${product.stock}` : 'kho n/a';
-  const name = product.name ? ` • ${product.name}` : '';
-  return `ID ${productId}${name} • ${price} • kho ${stock}`;
+function getKhommoProductLabel(productId = 7511) {
+  const id = Number.parseInt(productId, 10);
+  if (id === 6000) return '6000 • Hotmail OAuth • 350đ/acc';
+  return '7511 • Hotmail OAuth • 196đ/acc • còn dùng';
 }
 
-function syncKhommoProductUi(products = null) {
+function syncKhommoProductUi() {
   const allowedIds = [7511, 6000];
   const selectedId = Number.parseInt(el.khommoProductSelect?.value || '7511', 10);
-  if (el.khommoProductSelect && !allowedIds.includes(selectedId)) el.khommoProductSelect.value = '7511';
-  if (Array.isArray(products) && el.khommoProductSelect) {
-    products.forEach((product) => {
-      const productId = Number.parseInt(product.productId || product.id, 10);
+  const safeId = allowedIds.includes(selectedId) ? selectedId : 7511;
+  if (el.khommoProductSelect) {
+    el.khommoProductSelect.value = `${safeId}`;
+    allowedIds.forEach((productId) => {
       const option = el.khommoProductSelect.querySelector(`option[value="${productId}"]`);
-      if (!option) return;
-      option.textContent = product.ok === false
-        ? `ID ${productId} • chưa đọc được giá/kho`
-        : formatKhommoProductLabel(product);
+      if (option) option.textContent = getKhommoProductLabel(productId);
     });
   }
-  const activeOption = el.khommoProductSelect?.selectedOptions?.[0];
-  if (el.khommoProductPriceNote) {
-    el.khommoProductPriceNote.textContent = activeOption?.textContent || 'ID 7511 / 6000 • bấm Check để cập nhật giá/kho';
-  }
+  if (el.khommoProductPriceNote) el.khommoProductPriceNote.textContent = getKhommoProductLabel(safeId);
 }
 
 function filterRows(rows, query, picker) {
@@ -897,13 +889,10 @@ async function refreshKhommoProfile({ silent = false } = {}) {
     if (!silent) pushLog(`[Khommo] Balance lỗi: ${result.message || 'Unknown error'}`);
     return null;
   }
-  syncKhommoProductUi(result.products || null);
+  syncKhommoProductUi();
   setKhommoBalanceState({ status: 'success', balance: result.balance, checkedAt: result.checkedAt, runnableCount: result.hotmailRunnableCount });
   if (!silent) {
-    const productText = Array.isArray(result.products) && result.products.length
-      ? ` • ${result.products.map(formatKhommoProductLabel).join(' | ')}`
-      : '';
-    pushLog(`[Khommo] Balance: ${result.balance || 'OK'} • Hotmail RUN=${result.hotmailRunnableCount ?? 0}${productText}`);
+    pushLog(`[Khommo] Balance: ${result.balance || 'OK'} • Hotmail RUN=${result.hotmailRunnableCount ?? 0} • ${getKhommoProductLabel(el.khommoProductSelect?.value || 7511)}`);
   }
   return result;
 }
