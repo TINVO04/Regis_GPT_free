@@ -1489,17 +1489,65 @@ ipcMain.handle('run:start', async (_event, payload) => {
     return { ok: false, message: 'Mode có verify hoặc Mode 4 Stage 4 cần SMSPool API key để xác minh phone/9Router.' };
   }
 
+  const patchHotmailOtpHandling = () => {
+    if (ChatGPTAccountCreatorCore.prototype.__hotmailOtpHandlingPatched) return;
+
+    const originalRemoveHotmailAccount = ChatGPTAccountCreatorCore.prototype.removeHotmailAccount;
+    if (typeof originalRemoveHotmailAccount === 'function') {
+      ChatGPTAccountCreatorCore.prototype.removeHotmailAccount = function patchedRemoveHotmailAccount(email, ...args) {
+        const result = originalRemoveHotmailAccount.call(this, email, ...args);
+        if (result) {
+          sendToRenderer('log:line', { line: `[Hotmail] Đã bỏ ${email} khỏi danh sách để chuyển sang Hotmail mới.` });
+          sendToRenderer('data:changed', readWorkspaceData());
+        }
+        return result;
+      };
+    }
+
+    const originalGetHotmailOauthCode = ChatGPTAccountCreatorCore.prototype.getHotmailOauthCode;
+    if (typeof originalGetHotmailOauthCode === 'function') {
+      ChatGPTAccountCreatorCore.prototype.getHotmailOauthCode = async function patchedGetHotmailOauthCode(hotmailAccount, ...args) {
+        const currentMode = `${this.mode || this.config?.mode || mode || ''}`.trim().toLowerCase();
+        const isCreateFlow = currentMode === 'create' || currentMode === 'create_verify' || currentMode === 'create_pay_unlink';
+        const isVerifyFlow = currentMode === 'verify';
+        const email = `${hotmailAccount?.email || hotmailAccount || ''}`.trim();
+
+        const firstCode = await originalGetHotmailOauthCode.call(this, hotmailAccount, ...args);
+        if (firstCode || !email) return firstCode;
+
+        if (isCreateFlow) {
+          this.log?.(`[Hotmail] Create: ${email} hết OTP 7/7, bỏ mail này ngay và chuyển sang Hotmail mới, không login/chờ lại.`, 'WARNING');
+          if (typeof this.removeHotmailAccount === 'function') this.removeHotmailAccount(email);
+          return null;
+        }
+
+        if (isVerifyFlow) {
+          this.log?.(`[Hotmail] Verify: ${email} chưa lấy được OTP sau 7/7, retry login/get OTP thêm 1 lần trước khi bỏ mail.`, 'WARNING');
+          const secondCode = await originalGetHotmailOauthCode.call(this, hotmailAccount, ...args);
+          if (secondCode) return secondCode;
+          this.log?.(`[Hotmail] Verify: ${email} vẫn không có OTP sau retry, bỏ mail này và chuyển sang Hotmail mới.`, 'WARNING');
+          if (typeof this.removeHotmailAccount === 'function') this.removeHotmailAccount(email);
+          return null;
+        }
+
+        return null;
+      };
+    }
+
+    ChatGPTAccountCreatorCore.prototype.__hotmailOtpHandlingPatched = true;
+  };
+
   const patchCreateAccountOtpRetries = () => {
     if (ChatGPTAccountCreatorCore.prototype.__createAccountOtpRetriesPatched) return;
 
     const normalizeCreateOtpRetries = (value) => {
       const parsed = Number.parseInt(value, 10);
-      return Math.min(5, Math.max(1, Number.isNaN(parsed) ? 5 : parsed));
+      return Math.min(7, Math.max(1, Number.isNaN(parsed) ? 7 : parsed));
     };
 
     const originalGetVerificationCode = ChatGPTAccountCreatorCore.prototype.getVerificationCode;
     if (typeof originalGetVerificationCode === 'function') {
-      ChatGPTAccountCreatorCore.prototype.getVerificationCode = function patchedGetVerificationCode(email, maxRetries = 5, delay = 5, options = {}) {
+      ChatGPTAccountCreatorCore.prototype.getVerificationCode = function patchedGetVerificationCode(email, maxRetries = 7, delay = 5, options = {}) {
         return originalGetVerificationCode.call(this, email, normalizeCreateOtpRetries(maxRetries), delay, options);
       };
     }
@@ -1507,7 +1555,7 @@ ipcMain.handle('run:start', async (_event, payload) => {
     const originalClickResendEmailIfVisible = ChatGPTAccountCreatorCore.prototype.clickResendEmailIfVisible;
     if (typeof originalClickResendEmailIfVisible === 'function') {
       ChatGPTAccountCreatorCore.prototype.clickResendEmailIfVisible = function patchedClickResendEmailIfVisible(page, label = 'email verification') {
-        const normalizedLabel = `${label || ''}`.replace(/(tạo account\s*\()(\d+)\/\d+(\))/i, (_match, prefix, attempt, suffix) => `${prefix}${Math.min(5, Number.parseInt(attempt, 10) || 1)}/5${suffix}`);
+        const normalizedLabel = `${label || ''}`.replace(/(tạo account\s*\()(\d+)\/\d+(\))/i, (_match, prefix, attempt, suffix) => `${prefix}${Math.min(7, Number.parseInt(attempt, 10) || 1)}/7${suffix}`);
         return originalClickResendEmailIfVisible.call(this, page, normalizedLabel || label);
       };
     }
@@ -1915,6 +1963,7 @@ ipcMain.handle('run:start', async (_event, payload) => {
     return cliProxyApiAuthUrl;
   };
 
+  patchHotmailOtpHandling();
   patchCreateAccountOtpRetries();
   patchHotmailStatusRefresh();
   patchCreateOtpProfileOrder();
@@ -2051,7 +2100,7 @@ ipcMain.handle('run:start', async (_event, payload) => {
     vpnEnabled,
     vpnExtensionPath,
     onLog: (line) => {
-      const normalizedLine = `${line || ''}`.replace(/(tạo account\s*\()(\d+)\/24(\))/gi, (_match, prefix, attempt, suffix) => `${prefix}${Math.min(5, Number.parseInt(attempt, 10) || 1)}/5${suffix}`);
+      const normalizedLine = `${line || ''}`.replace(/(tạo account\s*\()(\d+)\/24(\))/gi, (_match, prefix, attempt, suffix) => `${prefix}${Math.min(7, Number.parseInt(attempt, 10) || 1)}/7${suffix}`);
       sendToRenderer('log:line', { line: normalizedLine });
       if (/proxy_runtime_error|407\s+Proxy Authentication Required|proxy server is refusing connections|proxy authentication required/i.test(normalizedLine)) {
         disableRuntimeProxyPool(currentRuntimeProxyPool || preparedProxyPools[0] || null, normalizedLine, (proxyLine) => sendToRenderer('log:line', { line: proxyLine }));

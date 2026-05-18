@@ -426,7 +426,7 @@ export class MailOtpService {
     oauthMessagesEndpointUrl = 'https://tools.dongvanfb.net/api/get_messages_oauth2',
     graphMessagesEndpointUrl = 'https://tools.dongvanfb.net/api/graph_messages',
     type = 'all',
-    maxRetries = 5,
+    maxRetries = 7,
     delay = 5,
     maxOtpAgeSeconds = 60,
     shouldStop = () => false,
@@ -462,7 +462,7 @@ export class MailOtpService {
       return Number.isNaN(isoTime) ? null : isoTime;
     };
     const parsedMaxRetries = Number.parseInt(maxRetries, 10);
-    const normalizedMaxRetries = Math.min(5, Math.max(1, Number.isNaN(parsedMaxRetries) ? 5 : parsedMaxRetries));
+    const normalizedMaxRetries = Math.min(7, Math.max(1, Number.isNaN(parsedMaxRetries) ? 7 : parsedMaxRetries));
     const parsedDelay = Number.parseInt(delay, 10);
     const normalizedDelay = Math.max(1, Number.isNaN(parsedDelay) ? 5 : parsedDelay);
     const parsedMaxOtpAgeSeconds = Number.parseInt(maxOtpAgeSeconds, 10);
