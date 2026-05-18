@@ -81,6 +81,9 @@ export class SMSPoolService {
     if (/invalid.*order|invalid.*id|orderid|order id|bad order/i.test(normalized)) {
       return { reasonCode: 'invalid_order', permanent: true };
     }
+    if (/only\s+re-?send\s+to\s+a\s+phonenumber\s+that\s+has\s+received\s+a\s+sms|only\s+resend\s+to\s+a\s+phonenumber\s+that\s+has\s+received\s+a\s+sms|has\s+received\s+a\s+sms/i.test(normalized)) {
+      return { reasonCode: 'no_received_sms_for_resend', permanent: true };
+    }
     if (/timeout|timed out/i.test(normalized)) {
       return { reasonCode: 'api_timeout', permanent: false };
     }
