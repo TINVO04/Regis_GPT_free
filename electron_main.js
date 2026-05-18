@@ -1477,6 +1477,34 @@ ipcMain.handle('run:start', async (_event, payload) => {
           return proxyError;
         }
 
+        const canTreatChatGptHomeAsCreateSuccess = this.__mailOtpSubmittedForCreateSuccess === true
+          && Date.now() - Number(this.__mailOtpSubmittedAt || 0) < 5 * 60 * 1000;
+
+        if (canTreatChatGptHomeAsCreateSuccess) {
+          const chatGptHome = await page.evaluate(() => {
+            const href = `${window.location?.href || ''}`;
+            const host = `${window.location?.hostname || ''}`.toLowerCase();
+            const pathname = `${window.location?.pathname || ''}`.toLowerCase();
+            const title = `${document.title || ''}`;
+            const text = `${document.body?.innerText || ''}`;
+            const hasCodeInput = Boolean(document.querySelector('input[name="code"], input[inputmode="numeric"], input[autocomplete="one-time-code"]'));
+            const hasAuthForm = /verify your email|enter code|email code|mã xác minh|verification code/i.test(text) || hasCodeInput;
+            const isChatGptHost = host === 'chatgpt.com' || host.endsWith('.chatgpt.com') || host === 'chat.openai.com';
+            const isAuthPath = /\/auth|\/login|\/signup|\/verify/i.test(pathname);
+            const hasChatGptShell = /chatgpt/i.test(title)
+              || /new chat|search chats|projects|codex|ask away|tips for getting started|okay,? let'?s go|message chatgpt|free offer/i.test(text);
+            if (isChatGptHost && !isAuthPath && !hasAuthForm && hasChatGptShell) {
+              return { step: 'home', detail: `chatgpt_home_after_mail_otp: ${href}` };
+            }
+            return null;
+          }).catch(() => null);
+
+          if (chatGptHome) {
+            this.log?.(`✅ Đã vào ChatGPT sau OTP mail, xem như tạo account thành công: ${chatGptHome.detail}`);
+            return chatGptHome;
+          }
+        }
+
         return originalDetectChatGptCreateState.call(this, page, ...args);
       };
     }
@@ -1532,6 +1560,11 @@ ipcMain.handle('run:start', async (_event, payload) => {
     if (typeof originalClickLocatorWithRetry === 'function' && typeof originalFillSignupProfile === 'function') {
       ChatGPTAccountCreatorCore.prototype.clickLocatorWithRetry = async function patchedClickLocatorWithRetry(locator, options = {}) {
         const label = `${options?.label || ''}`;
+        if (/sign\s*up|submit\s+sau\s+email|continue\s+sau\s+email/i.test(label)) {
+          this.__mailOtpSubmittedForCreateSuccess = false;
+          this.__mailOtpSubmittedAt = 0;
+        }
+
         const delayed = this.__currentCreatePage ? delayedProfiles.get(this.__currentCreatePage) : null;
         if (delayed && /OTP.*profile|profile.*OTP/i.test(label)) {
           delayedProfiles.delete(this.__currentCreatePage);
@@ -1542,7 +1575,12 @@ ipcMain.handle('run:start', async (_event, payload) => {
           });
         }
 
-        return originalClickLocatorWithRetry.call(this, locator, options);
+        const result = await originalClickLocatorWithRetry.call(this, locator, options);
+        if (/OTP\s*mail|submit\s+(?:lại\s+)?sau\s+OTP|sau\s+OTP\s+mail/i.test(label)) {
+          this.__mailOtpSubmittedForCreateSuccess = true;
+          this.__mailOtpSubmittedAt = Date.now();
+        }
+        return result;
       };
     }
 
