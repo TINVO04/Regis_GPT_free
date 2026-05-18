@@ -1973,9 +1973,125 @@ ipcMain.handle('run:start', async (_event, payload) => {
       return false;
     };
 
+    const detectSmsCodePage = async (page) => {
+      if (!page) return false;
+      const codeSelectors = [
+        'input[autocomplete="one-time-code"]',
+        'input[name="code"]',
+        'input[inputmode="numeric"]',
+        'input[type="tel"][maxlength="6"]',
+        'input[aria-label*="code" i]',
+        'input[placeholder*="code" i]',
+      ];
+      for (const selector of codeSelectors) {
+        if (await page.locator(selector).first().isVisible({ timeout: 600 }).catch(() => false)) return true;
+      }
+      return page.locator('body').innerText({ timeout: 800 }).then((text) => /enter\s+(?:the\s+)?(?:6[-\s]?)?code|verification\s+code|we\s+sent\s+(?:a\s+)?code/i.test(`${text || ''}`)).catch(() => false);
+    };
+
+    const goBackToPhoneInput = async (core, page) => {
+      if (!page) return false;
+      if (await getPhoneInputLocator(page)) return true;
+
+      const backLocators = [
+        'button[aria-label*="back" i]',
+        'a[aria-label*="back" i]',
+        'button:has-text("Back")',
+        'a:has-text("Back")',
+        'button:has-text("Change")',
+        'a:has-text("Change")',
+      ];
+      for (const selector of backLocators) {
+        const backButton = page.locator(selector).first();
+        if (await backButton.isVisible({ timeout: 700 }).catch(() => false)) {
+          await backButton.click({ timeout: 3000 }).catch(() => {});
+          await core.sleep?.(1500);
+          if (await getPhoneInputLocator(page)) return true;
+        }
+      }
+
+      await page.goBack({ waitUntil: 'domcontentloaded', timeout: 12000 }).catch(() => null);
+      await core.sleep?.(2000);
+      if (await getPhoneInputLocator(page)) return true;
+
+      await page.keyboard.press('Alt+Left').catch(() => {});
+      await core.sleep?.(1500);
+      return Boolean(await getPhoneInputLocator(page));
+    };
+
+    const retrySmsTimeoutPhoneOnSameSession = async (core, smsService, timedOutOrderId, originalGetCode, shouldStop = () => false) => {
+      const context = core?.__smsPhoneRetryContext;
+      const page = core?.__smsLastPhonePage || core?.__currentCreatePage;
+      const locator = core?.__smsLastPhoneSubmitLocator;
+      const options = core?.__smsLastPhoneSubmitOptions || { label: 'Continue / Send code sau phone' };
+      const activeItemRef = core?.__smsCurrentItem;
+      if (!context?.smsService || !page || !locator || !activeItemRef || typeof core.getValidSmsItem !== 'function') return null;
+
+      let lastTimedOutOrderId = `${timedOutOrderId || activeItemRef.orderId || ''}`.trim();
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        if (typeof shouldStop === 'function' && shouldStop()) return null;
+        if (lastTimedOutOrderId) {
+          const itemInState = core.__smsCurrentStateItem?.orderId === lastTimedOutOrderId
+            ? core.__smsCurrentStateItem
+            : core.findSmsItemByOrderId?.(lastTimedOutOrderId) || activeItemRef;
+          core.exhaustSmsItem?.(itemInState, 'sms_code_timeout_same_session_retry');
+          addUniqueOrderId(context.excludedOrderIds, lastTimedOutOrderId);
+          addUniqueOrderId(context.exhaustedOrderIds, lastTimedOutOrderId);
+          purgeUsedUpSmsItems(core, 'sms_code_timeout_same_session_retry');
+        }
+
+        core.log?.(`⌛ Số SMS order ${lastTimedOutOrderId || 'unknown'} đã vào trang nhập mã nhưng không có code. Quay lại trang nhập số và đổi số mới cùng phiên (${attempt}/3)...`, 'WARNING');
+        const canInputPhone = await goBackToPhoneInput(core, page);
+        if (!canInputPhone) {
+          core.log?.('⚠️ Không quay lại được trang nhập số sau SMS timeout, để core retry theo cơ chế cũ.', 'WARNING');
+          return null;
+        }
+
+        const nextItem = await core.getValidSmsItem(
+          smsService,
+          context.excludedOrderIds,
+          context.incorrectOrderIds,
+          context.exhaustedOrderIds,
+        );
+        if (!nextItem?.phoneNumber || !nextItem?.orderId) return null;
+
+        const nextStateItem = core.findSmsItemByOrderId?.(nextItem.orderId) || nextItem;
+        core.__smsCurrentStateItem = nextStateItem;
+        Object.assign(activeItemRef, nextItem);
+        core.__smsCurrentItem = activeItemRef;
+
+        const filled = await fillPhoneNumberOnCurrentPage(core, page, activeItemRef);
+        if (!filled) return null;
+
+        const clicked = await ChatGPTAccountCreatorCore.prototype.__smsOriginalClickLocatorWithRetry.call(core, locator, options);
+        if (!clicked) return null;
+        await core.sleep?.(2500);
+
+        if (await detectOpenAiPhoneRejected(page)) {
+          core.log?.('📵 Số mới bị từ chối sau khi đổi vì timeout. Tiếp tục bỏ số và thử số khác.', 'WARNING');
+          lastTimedOutOrderId = `${activeItemRef.orderId || ''}`.trim();
+          continue;
+        }
+
+        if (!await detectSmsCodePage(page)) {
+          core.log?.('⚠️ Sau khi đổi số chưa thấy trang nhập mã SMS, vẫn thử chờ code rồi để core xử lý nếu thất bại.', 'WARNING');
+        }
+
+        const code = await originalGetCode.call(smsService, activeItemRef.orderId, shouldStop);
+        if (code) {
+          core.log?.(`✅ Số SMS mới đã có code sau khi đổi trong cùng phiên (Order ${activeItemRef.orderId}).`);
+          return code;
+        }
+        lastTimedOutOrderId = `${activeItemRef.orderId || ''}`.trim();
+      }
+
+      return null;
+    };
+
     const originalGetValidSmsItem = ChatGPTAccountCreatorCore.prototype.getValidSmsItem;
     if (typeof originalGetValidSmsItem === 'function') {
       ChatGPTAccountCreatorCore.prototype.getValidSmsItem = async function patchedSamePageGetValidSmsItem(smsService, excludedOrderIds = [], incorrectOrderIds = [], exhaustedOrderIds = [], ...args) {
+        if (smsService) smsService.__smsRetryCore = this;
         this.__smsPhoneRetryContext = { smsService, excludedOrderIds, incorrectOrderIds, exhaustedOrderIds };
         purgeUsedUpSmsItems(this, 'before_pick_candidate');
         const smsItem = await originalGetValidSmsItem.call(this, smsService, excludedOrderIds, incorrectOrderIds, exhaustedOrderIds, ...args);
@@ -2025,10 +2141,17 @@ ipcMain.handle('run:start', async (_event, payload) => {
 
     const originalClickLocatorWithRetry = ChatGPTAccountCreatorCore.prototype.clickLocatorWithRetry;
     if (typeof originalClickLocatorWithRetry === 'function') {
+      ChatGPTAccountCreatorCore.prototype.__smsOriginalClickLocatorWithRetry = originalClickLocatorWithRetry;
       ChatGPTAccountCreatorCore.prototype.clickLocatorWithRetry = async function patchedSmsPhoneClickLocatorWithRetry(locator, options = {}) {
-        const result = await originalClickLocatorWithRetry.call(this, locator, options);
         const label = `${options?.label || ''}`;
-        if (result && /phone|send\s*code\s*sau\s*phone|continue\s*\/\s*send\s*code/i.test(label)) {
+        const isPhoneSubmit = /phone|send\s*code\s*sau\s*phone|continue\s*\/\s*send\s*code/i.test(label);
+        if (isPhoneSubmit) {
+          this.__smsLastPhoneSubmitLocator = locator;
+          this.__smsLastPhoneSubmitOptions = { ...options };
+          this.__smsLastPhonePage = typeof locator?.page === 'function' ? locator.page() : this.__currentCreatePage;
+        }
+        const result = await originalClickLocatorWithRetry.call(this, locator, options);
+        if (result && isPhoneSubmit) {
           await this.sleep?.(2500);
           const page = typeof locator?.page === 'function' ? locator.page() : this.__currentCreatePage;
           const phoneRejected = await detectOpenAiPhoneRejected(page);
@@ -2043,6 +2166,28 @@ ipcMain.handle('run:start', async (_event, payload) => {
         }
         return result;
       };
+    }
+
+    if (!SMSPoolService.prototype.__smsCodeTimeoutSameSessionPatched) {
+      const originalGetCode = SMSPoolService.prototype.getCode;
+      if (typeof originalGetCode === 'function') {
+        SMSPoolService.prototype.getCode = async function patchedSmsTimeoutSameSessionGetCode(orderId, shouldStop = () => false, ...args) {
+          const code = await originalGetCode.call(this, orderId, shouldStop, ...args);
+          if (code) return code;
+
+          const core = this.__smsRetryCore;
+          if (!core?.__smsPhoneRetryContext || core.__smsCodeTimeoutRetryActive) return code;
+
+          core.__smsCodeTimeoutRetryActive = true;
+          try {
+            const sameSessionCode = await retrySmsTimeoutPhoneOnSameSession(core, this, orderId, originalGetCode, shouldStop);
+            return sameSessionCode || code;
+          } finally {
+            core.__smsCodeTimeoutRetryActive = false;
+          }
+        };
+        SMSPoolService.prototype.__smsCodeTimeoutSameSessionPatched = true;
+      }
     }
 
     ChatGPTAccountCreatorCore.prototype.__smsPhoneRejectedFastRetryPatched = true;
