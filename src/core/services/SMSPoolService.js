@@ -56,18 +56,57 @@ export class SMSPoolService {
     }
   }
 
+  stripHtml(value = '') {
+    return `${value || ''}`
+      .replace(/<[^>]*>/g, ' ')
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/&/gi, '&')
+      .replace(/</gi, '<')
+      .replace(/>/gi, '>')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  isTransientPurchaseFailure(message = '') {
+    const normalized = this.stripHtml(message).toLowerCase();
+    return /all available slots are currently occupied|available slots.*occupied|try again in|try again later|please be patient|rate limit|too many/i.test(normalized);
+  }
+
   async buyNumber(shouldStop = () => false) {
     const url = `https://api.smspool.net/purchase/sms?key=${this.apiKey}&service=671&country=1&max_price=0.07`;
-    try {
-      const res = await this.fetchJson(url, { timeoutMs: 15000, shouldStop });
-      if (res.success) {
-        console.log(`[SMSPool] Đã thuê số mới: +${res.cc}${res.phonenumber} (ID: ${res.orderid})`);
-        return res;
+    const maxAttempts = 5;
+    const retryDelayMs = 60000;
+    let lastMessage = '';
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        const res = await this.fetchJson(url, { timeoutMs: 15000, shouldStop });
+        if (res.success) {
+          console.log(`[SMSPool] Đã thuê số mới: +${res.cc}${res.phonenumber} (ID: ${res.orderid})`);
+          return res;
+        }
+
+        lastMessage = this.stripHtml(res.message || res.error || 'Hết số hoặc không đủ số dư');
+        if (!this.isTransientPurchaseFailure(lastMessage) || attempt >= maxAttempts) {
+          throw new Error(lastMessage);
+        }
+
+        console.log(`[SMSPool] Pool đang bận (${lastMessage}). Chờ ${Math.round(retryDelayMs / 1000)}s rồi thử thuê lại (${attempt}/${maxAttempts})...`);
+        const shouldContinue = await this.sleep(retryDelayMs, shouldStop);
+        if (!shouldContinue) throw new Error('SMSPool request stopped');
+      } catch (error) {
+        lastMessage = this.stripHtml(error.message || lastMessage || 'SMSPool purchase failed');
+        if (!this.isTransientPurchaseFailure(lastMessage) || attempt >= maxAttempts) {
+          throw new Error(`SMSPool API Error: ${lastMessage}`);
+        }
+
+        console.log(`[SMSPool] Thuê số lỗi tạm thời (${lastMessage}). Chờ ${Math.round(retryDelayMs / 1000)}s rồi thử lại (${attempt}/${maxAttempts})...`);
+        const shouldContinue = await this.sleep(retryDelayMs, shouldStop);
+        if (!shouldContinue) throw new Error('SMSPool API Error: SMSPool request stopped');
       }
-      throw new Error(res.message || 'Hết số hoặc không đủ số dư');
-    } catch (error) {
-      throw new Error(`SMSPool API Error: ${error.message}`);
     }
+
+    throw new Error(`SMSPool API Error: ${lastMessage || 'Không thuê được số SMS mới'}`);
   }
 
   classifyResendFailure(message = '') {
