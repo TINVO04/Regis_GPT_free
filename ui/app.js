@@ -36,7 +36,7 @@ const el = {
   khommoBalanceValue: document.getElementById('khommo-balance-value'),
   khommoBalanceMeta: document.getElementById('khommo-balance-meta'),
   khommoBalanceCheckBtn: document.getElementById('khommo-balance-check-button'),
-  khommoProductSelect: document.getElementById('khommo-product-select'),
+  khommoProductId: document.getElementById('khommo-product-id-input'),
   khommoProductPriceNote: document.getElementById('khommo-product-price-note'),
   khommoOpenBtn: document.getElementById('khommo-open-button'),
   shopgmail9999Key: document.getElementById('shopgmail9999-key-input'),
@@ -233,7 +233,7 @@ function initRuntimeInputs() {
     el.khommoKey,
     el.khommoBalanceCheckBtn,
     el.khommoOpenBtn,
-    el.khommoProductSelect,
+    el.khommoProductId,
     el.shopgmail9999Key,
     el.shopgmail9999BalanceCheckBtn,
     el.shopgmail9999OpenBtn,
@@ -484,22 +484,13 @@ function syncClonemupProductUi(options = {}) {
 }
 
 function getKhommoProductLabel(productId = 7511) {
-  const id = Number.parseInt(productId, 10);
-  if (id === 6000) return '6000 • Hotmail OAuth • 350đ/acc';
-  return '7511 • Hotmail OAuth • 196đ/acc • còn dùng';
+  const id = Math.max(1, Number.parseInt(productId, 10) || 7511);
+  return `Product ID ${id} • Khommo tự nhận diện sản phẩm khi mua`;
 }
 
 function syncKhommoProductUi() {
-  const allowedIds = [7511, 6000];
-  const selectedId = Number.parseInt(el.khommoProductSelect?.value || '7511', 10);
-  const safeId = allowedIds.includes(selectedId) ? selectedId : 7511;
-  if (el.khommoProductSelect) {
-    el.khommoProductSelect.value = `${safeId}`;
-    allowedIds.forEach((productId) => {
-      const option = el.khommoProductSelect.querySelector(`option[value="${productId}"]`);
-      if (option) option.textContent = getKhommoProductLabel(productId);
-    });
-  }
+  const safeId = Math.max(1, Number.parseInt(el.khommoProductId?.value || '7511', 10) || 7511);
+  if (el.khommoProductId) el.khommoProductId.value = `${safeId}`;
   if (el.khommoProductPriceNote) el.khommoProductPriceNote.textContent = getKhommoProductLabel(safeId);
 }
 
@@ -892,7 +883,7 @@ async function refreshKhommoProfile({ silent = false } = {}) {
   syncKhommoProductUi();
   setKhommoBalanceState({ status: 'success', balance: result.balance, checkedAt: result.checkedAt, runnableCount: result.hotmailRunnableCount });
   if (!silent) {
-    pushLog(`[Khommo] Balance: ${result.balance || 'OK'} • Hotmail RUN=${result.hotmailRunnableCount ?? 0} • ${getKhommoProductLabel(el.khommoProductSelect?.value || 7511)}`);
+    pushLog(`[Khommo] Balance: ${result.balance || 'OK'} • Hotmail RUN=${result.hotmailRunnableCount ?? 0} • ${getKhommoProductLabel(el.khommoProductId?.value || 7511)}`);
   }
   return result;
 }
@@ -908,7 +899,7 @@ async function buyHotmailAccounts() {
   if (!apiKey) return pushLog(`[${label}] Thiếu API key để mua Hotmail`);
   if (!amount) return pushLog(`[${label}] Số lượng mua phải > 0`);
   const productId = isKhommo
-    ? ([7511, 6000].includes(Number.parseInt(el.khommoProductSelect?.value || '7511', 10)) ? Number.parseInt(el.khommoProductSelect?.value || '7511', 10) : 7511)
+    ? Math.max(1, Number.parseInt(el.khommoProductId?.value || '7511', 10) || 7511)
     : Math.max(1, Number.parseInt(el.clonemupProductId?.value || '7614', 10) || 7614);
   el.hotmailBuyBtn.disabled = true;
   pushLog(`[${label}] Đang mua ${amount} Hotmail product=${productId}...`);
@@ -979,10 +970,7 @@ function renderRuntimeConfig(config = {}) {
   if (el.clonemupProductId) el.clonemupProductId.value = Math.max(1, Number.parseInt(config.clonemup_hotmail_product_id ?? 7614, 10) || 7614);
   syncClonemupProductUi({ silentLegacyNormalization: true });
   if (config.khommo_api_key !== undefined && el.khommoKey) el.khommoKey.value = config.khommo_api_key || '';
-  if (el.khommoProductSelect) {
-    const khommoProductId = Number.parseInt(config.khommo_hotmail_product_id ?? 7511, 10);
-    el.khommoProductSelect.value = [7511, 6000].includes(khommoProductId) ? `${khommoProductId}` : '7511';
-  }
+  if (el.khommoProductId) el.khommoProductId.value = Math.max(1, Number.parseInt(config.khommo_hotmail_product_id ?? 7511, 10) || 7511);
   syncKhommoProductUi();
   if (config.shopgmail9999_api_key !== undefined && el.shopgmail9999Key) el.shopgmail9999Key.value = config.shopgmail9999_api_key || '';
   if (el.proxyRoundRobin && config.proxy_round_robin !== undefined) el.proxyRoundRobin.checked = config.proxy_round_robin === true;
@@ -1509,7 +1497,7 @@ function getConfigPayload() {
     clonemupApiKey: el.clonemupKey?.value.trim() || '',
     clonemupHotmailProductId: Math.max(1, Number.parseInt(el.clonemupProductId?.value || '7614', 10) || 7614),
     khommoApiKey: el.khommoKey?.value.trim() || '',
-    khommoHotmailProductId: [7511, 6000].includes(Number.parseInt(el.khommoProductSelect?.value || '7511', 10)) ? Number.parseInt(el.khommoProductSelect?.value || '7511', 10) : 7511,
+    khommoHotmailProductId: Math.max(1, Number.parseInt(el.khommoProductId?.value || '7511', 10) || 7511),
     shopgmail9999ApiKey: el.shopgmail9999Key?.value.trim() || '',
     password: el.password.value.trim(),
     routerPassword: el.routerPassword.value.trim(),
@@ -1822,9 +1810,8 @@ async function handleSaveConfig() {
       if (el.clonemupProductId && result.config.clonemup_hotmail_product_id !== undefined) el.clonemupProductId.value = Math.max(1, Number.parseInt(result.config.clonemup_hotmail_product_id, 10) || 7614);
       syncClonemupProductUi({ silentLegacyNormalization: true });
       if (el.khommoKey && result.config.khommo_api_key !== undefined) el.khommoKey.value = `${result.config.khommo_api_key || ''}`;
-      if (el.khommoProductSelect && result.config.khommo_hotmail_product_id !== undefined) {
-        const khommoProductId = Number.parseInt(result.config.khommo_hotmail_product_id, 10);
-        el.khommoProductSelect.value = [7511, 6000].includes(khommoProductId) ? `${khommoProductId}` : '7511';
+      if (el.khommoProductId && result.config.khommo_hotmail_product_id !== undefined) {
+        el.khommoProductId.value = `${Math.max(1, Number.parseInt(result.config.khommo_hotmail_product_id, 10) || 7511)}`;
       }
       syncKhommoProductUi();
       if (el.shopgmail9999Key && result.config.shopgmail9999_api_key !== undefined) el.shopgmail9999Key.value = `${result.config.shopgmail9999_api_key || ''}`;
@@ -2051,7 +2038,8 @@ function bindEvents() {
   el.khommoKey?.addEventListener('change', () => refreshKhommoProfile({ silent: true }));
   el.khommoKey?.addEventListener('blur', () => refreshKhommoProfile({ silent: true }));
   el.khommoBalanceCheckBtn?.addEventListener('click', () => refreshKhommoProfile({ silent: false }));
-  el.khommoProductSelect?.addEventListener('change', () => syncKhommoProductUi());
+  el.khommoProductId?.addEventListener('input', () => syncKhommoProductUi());
+  el.khommoProductId?.addEventListener('change', () => syncKhommoProductUi());
   el.khommoOpenBtn?.addEventListener('click', async () => {
     const result = await window.desktopAPI.openExternalUrl('https://khommo.vn/document-api');
     if (!result?.ok) pushLog(`[Khommo] Không mở được website: ${result?.message || 'unknown error'}`);

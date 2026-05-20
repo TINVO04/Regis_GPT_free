@@ -429,8 +429,7 @@ function getHotmailRunnableCount() {
 async function buyKhommoHotmailForRun({ apiKey = '', amount = 1, productId = 7511, reason = 'run', status = 'mail_ready' } = {}) {
   const safeApiKey = `${apiKey || ''}`.trim();
   const safeAmount = Math.max(1, Number.parseInt(amount, 10) || 0);
-  const requestedProductId = Number.parseInt(productId, 10);
-  const safeProductId = [7511, 6000].includes(requestedProductId) ? requestedProductId : 7511;
+  const safeProductId = Math.max(1, Number.parseInt(productId, 10) || 7511);
   if (!safeApiKey) throw new Error('Thiếu Khommo API key để tự mua Hotmail.');
   const service = new KhommoService(safeApiKey);
   sendToRenderer('log:line', { line: `[Khommo] ${reason}: tự mua ${safeAmount} Hotmail product=${safeProductId} vì chưa đủ mail_ready.` });
@@ -1430,9 +1429,7 @@ function normalizeConfigPatch(payload = {}) {
     cpl_test_card_expiry: keepSecret(payload?.cplTestCardExpiry, current.cpl_test_card_expiry),
     cpl_test_card_cvc: keepSecret(payload?.cplTestCardCvc, current.cpl_test_card_cvc),
     clonemup_hotmail_product_id: Math.max(1, Number.parseInt(payload?.clonemupHotmailProductId ?? current.clonemup_hotmail_product_id ?? 7614, 10) || 7614),
-    khommo_hotmail_product_id: [7511, 6000].includes(Number.parseInt(payload?.khommoHotmailProductId ?? current.khommo_hotmail_product_id ?? 7511, 10))
-      ? Number.parseInt(payload?.khommoHotmailProductId ?? current.khommo_hotmail_product_id ?? 7511, 10)
-      : 7511,
+    khommo_hotmail_product_id: Math.max(1, Number.parseInt(payload?.khommoHotmailProductId ?? current.khommo_hotmail_product_id ?? 7511, 10) || 7511),
     verify_provider: normalizeVerifyProvider(payload?.verifyProvider ?? current.verify_provider ?? '9router'),
     cliproxyapi_auth_url: keepSecret(payload?.cliProxyApiAuthUrl, current.cliproxyapi_auth_url),
     cliproxyapi_executable_path: keepString(payload?.cliProxyApiExecutablePath, current.cliproxyapi_executable_path, getDefaultCliProxyApiExecutablePath()),
@@ -1488,11 +1485,7 @@ ipcMain.handle('khommo:get-profile', async (_event, payload) => {
   try {
     const service = new KhommoService(apiKey);
     const profile = await service.getProfile();
-    const products = [
-      { ok: true, productId: 7511, id: '7511', price: '196', stock: '', name: 'Hotmail OAuth', summary: '7511 • Hotmail OAuth • 196đ/acc • còn dùng' },
-      { ok: true, productId: 6000, id: '6000', price: '350', stock: '', name: 'Hotmail OAuth', summary: '6000 • Hotmail OAuth • 350đ/acc' },
-    ];
-    return { ok: true, balance: profile.balance, raw: profile.raw, products, checkedAt: new Date().toISOString(), hotmailRunnableCount: getHotmailRunnableCount() };
+    return { ok: true, balance: profile.balance, raw: profile.raw, products: [], checkedAt: new Date().toISOString(), hotmailRunnableCount: getHotmailRunnableCount() };
   } catch (error) {
     return { ok: false, message: error.message || 'Không kiểm tra được số dư Khommo.' };
   }
@@ -1570,8 +1563,7 @@ ipcMain.handle('khommo:buy-hotmail', async (_event, payload) => {
   const current = readJsonFile(workspaceState.configFile, {});
   const apiKey = `${payload?.apiKey || current.khommo_api_key || ''}`.trim();
   const amount = Math.max(1, Number.parseInt(payload?.amount, 10) || 0);
-  const requestedProductId = Number.parseInt(payload?.productId ?? current.khommo_hotmail_product_id ?? 7511, 10);
-  const productId = [7511, 6000].includes(requestedProductId) ? requestedProductId : 7511;
+  const productId = Math.max(1, Number.parseInt(payload?.productId ?? current.khommo_hotmail_product_id ?? 7511, 10) || 7511);
   const batchSize = amount;
   if (!apiKey) return { ok: false, message: 'Thiếu Khommo API key.' };
   if (!amount) return { ok: false, message: 'Số lượng mua phải lớn hơn 0.' };
@@ -1649,9 +1641,7 @@ ipcMain.handle('run:start', async (_event, payload) => {
   const cliProxyApiCommand = buildCliProxyApiCommand(payload, savedConfig);
   const isKhommoHotmailRun = (mode === 'create' || mode === 'create_verify') && selectedMailDomain === 'hotmail-khommo';
   const khommoNeededStatus = 'mail_ready';
-  const khommoProductId = [7511, 6000].includes(Number.parseInt(payload?.khommoHotmailProductId ?? savedConfig.khommo_hotmail_product_id ?? 7511, 10))
-    ? Number.parseInt(payload?.khommoHotmailProductId ?? savedConfig.khommo_hotmail_product_id ?? 7511, 10)
-    : 7511;
+  const khommoProductId = Math.max(1, Number.parseInt(payload?.khommoHotmailProductId ?? savedConfig.khommo_hotmail_product_id ?? 7511, 10) || 7511);
   let cliProxyApiAuthUrl = '';
   let cliProxyApiCaptureProcess = null;
   const needsVerifyProvider = mode === 'verify' || mode === 'create_verify' || (isCreatePayUnlinkMode && createPayUnlinkStage === 'stage4');
