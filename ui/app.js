@@ -203,17 +203,23 @@ let preflightState = {
 let saveConfigStatusTimer = null;
 let smsBalanceRefreshTimer = null;
 let currentRunStatus = 'idle';
+const MAX_RENDERED_LOG_LINES = 800;
+const MAX_RENDERED_PROXY_LOG_LINES = 150;
+const LOG_RENDER_DEBOUNCE_MS = 80;
+
 let tableState = {
-  accounts: { rows: [], query: '', page: 1, pageSize: 500, editing: false },
+  accounts: { rows: [], query: '', page: 1, pageSize: 200, editing: false },
   sms: { rows: [], query: '', page: 1, pageSize: 100, editing: false },
   history: { rows: [], query: '', page: 1, pageSize: 50 },
-  hotmail: { rows: [], query: '', page: 1, pageSize: 500, editing: false },
+  hotmail: { rows: [], query: '', page: 1, pageSize: 200, editing: false },
   proxyPools: { rows: [] },
 };
 let logUiState = {
   filter: 'all',
   autoScroll: true,
 };
+let logRenderTimer = null;
+let proxyLogRenderTimer = null;
 let activeProxySelection = null;
 
 const runtimeInputs = [];
@@ -387,11 +393,47 @@ function renderLog() {
   if (logUiState.autoScroll) el.logOutput.scrollTop = el.logOutput.scrollHeight;
 }
 
+function scheduleRenderLog({ immediate = false } = {}) {
+  if (logRenderTimer) {
+    if (!immediate) return;
+    clearTimeout(logRenderTimer);
+    logRenderTimer = null;
+  }
+
+  if (immediate) {
+    renderLog();
+    return;
+  }
+
+  logRenderTimer = setTimeout(() => {
+    logRenderTimer = null;
+    renderLog();
+  }, LOG_RENDER_DEBOUNCE_MS);
+}
+
 function renderProxyLog() {
   if (!el.proxyLogOutput || !el.proxyLogCount) return;
   el.proxyLogOutput.textContent = proxyLogLines.length ? proxyLogLines.join('\n') : 'Chưa có log proxy.';
   el.proxyLogCount.textContent = `${proxyLogLines.length} lines`;
   el.proxyLogOutput.scrollTop = el.proxyLogOutput.scrollHeight;
+}
+
+function scheduleRenderProxyLog({ immediate = false } = {}) {
+  if (proxyLogRenderTimer) {
+    if (!immediate) return;
+    clearTimeout(proxyLogRenderTimer);
+    proxyLogRenderTimer = null;
+  }
+
+  if (immediate) {
+    renderProxyLog();
+    return;
+  }
+
+  proxyLogRenderTimer = setTimeout(() => {
+    proxyLogRenderTimer = null;
+    renderProxyLog();
+  }, LOG_RENDER_DEBOUNCE_MS);
 }
 
 function isProxyLogLine(line = '') {
@@ -402,15 +444,19 @@ function isProxyLogLine(line = '') {
 function pushProxyLog(line) {
   const timestamp = new Date().toLocaleTimeString('vi-VN', { hour12: false });
   proxyLogLines.push(`[${timestamp}] ${line}`);
-  if (proxyLogLines.length > 300) proxyLogLines = proxyLogLines.slice(proxyLogLines.length - 300);
-  renderProxyLog();
+  if (proxyLogLines.length > MAX_RENDERED_PROXY_LOG_LINES) {
+    proxyLogLines.splice(0, proxyLogLines.length - MAX_RENDERED_PROXY_LOG_LINES);
+  }
+  scheduleRenderProxyLog();
 }
 
 function pushLog(line) {
   logLines.push(line);
-  if (logLines.length > 2000) logLines = logLines.slice(logLines.length - 2000);
+  if (logLines.length > MAX_RENDERED_LOG_LINES) {
+    logLines.splice(0, logLines.length - MAX_RENDERED_LOG_LINES);
+  }
   if (isProxyLogLine(line)) pushProxyLog(line);
-  renderLog();
+  scheduleRenderLog();
 }
 
 function setSaveConfigStatus(message = '', type = '') {
@@ -2069,7 +2115,7 @@ function bindEvents() {
   el.pauseLogBtn.addEventListener('click', () => {
     logUiState.autoScroll = !logUiState.autoScroll;
     el.pauseLogBtn.textContent = logUiState.autoScroll ? 'Pause' : 'Resume';
-    renderLog();
+    scheduleRenderLog({ immediate: true });
   });
   el.copyLogBtn.addEventListener('click', async () => {
     const text = el.logOutput.textContent || '';
@@ -2082,14 +2128,14 @@ function bindEvents() {
   });
   el.clearLogBtn.addEventListener('click', () => {
     logLines = [];
-    renderLog();
+    scheduleRenderLog({ immediate: true });
   });
   el.logFilterGroup.addEventListener('click', (event) => {
     const button = event.target.closest('[data-log-filter]');
     if (!button) return;
     logUiState.filter = button.dataset.logFilter || 'all';
     el.logFilterGroup.querySelectorAll('[data-log-filter]').forEach((item) => item.classList.toggle('is-active', item === button));
-    renderLog();
+    scheduleRenderLog({ immediate: true });
   });
 
   el.accountsSearch.addEventListener('input', () => {
@@ -2199,9 +2245,9 @@ function bindEvents() {
   el.proxyList?.addEventListener('click', handleProxyListClick);
   el.proxyLogClearBtn?.addEventListener('click', () => {
     proxyLogLines = [];
-    renderProxyLog();
+    scheduleRenderProxyLog({ immediate: true });
   });
-  renderProxyLog();
+  scheduleRenderProxyLog({ immediate: true });
   document.querySelectorAll('[data-close-proxy-modal]').forEach((btn) => btn.addEventListener('click', closeProxyModal));
 
   el.refreshBtn.addEventListener('click', async () => {
