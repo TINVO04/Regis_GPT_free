@@ -1,10 +1,48 @@
 {
-  "name": "chatgpt-account-creator",
+  "name": "reg-codex-tinvo",
   "version": "1.3.6",
-  "description": "Desktop wrapper for ChatGPT account creator automation",
-  "homepage": "https://github.com/NDuyPhuc/Accounts-9Router",
+  "description": "REG CODEX TINVO desktop automation studio",
+  "homepage": "https://github.com/TINVO04/Regis_GPT_free",
   "type": "module",
   "main": "electron_main.js",
+  "scripts": {
+    "desktop:dev": "electron .",
+    "dist": "node scripts/electron-builder-runner.mjs --win --publish never",
+    "publish:github": "node scripts/electron-builder-runner.mjs --win --publish always"
+  },
+  "build": {
+    "appId": "com.tinvo.regcodex",
+    "productName": "REG CODEX TINVO",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "**/*",
+      "!release{,/**}",
+      "!release_build_protected{,/**}",
+      "!.protected_release{,/**}",
+      "!*.log"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "artifactName": "REG-CODEX-TINVO-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "TINVO04",
+        "repo": "Regis_GPT_free",
+        "releaseType": "release"
+      }
+    ]
+  },
   "dependencies": {
     "@faker-js/faker": "^10.1.0",
     "cheerio": "^1.0.0",
@@ -21,6 +59,7 @@
     "node": ">=18.0.0"
   },
   "devDependencies": {
-    "electron": "^37.6.0"
+    "electron": "^37.6.0",
+    "electron-builder": "^26.0.12"
   }
 }

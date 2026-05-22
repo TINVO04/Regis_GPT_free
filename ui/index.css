@@ -204,6 +204,31 @@ body::before {
   line-height: 1.05;
   letter-spacing: -0.04em;
   font-weight: 900;
+  color: transparent;
+  background: linear-gradient(90deg, #ff004c, #ffb300, #22ff00, #00e5ff, #4d5bff, #ff00ff, #ff004c);
+  background-size: 420% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: tinvoTitleRgb 3.2s linear infinite;
+  text-shadow: 0 0 18px hsl(190 92% 56% / 0.22), 0 0 30px hsl(310 95% 58% / 0.16);
+}
+
+@keyframes tinvoTitleRgb {
+  0% {
+    background-position: 0% 50%;
+    filter: hue-rotate(0deg) drop-shadow(0 0 10px hsl(190 92% 56% / 0.22));
+  }
+
+  50% {
+    background-position: 100% 50%;
+    filter: hue-rotate(180deg) drop-shadow(0 0 16px hsl(310 95% 58% / 0.32));
+  }
+
+  100% {
+    background-position: 0% 50%;
+    filter: hue-rotate(360deg) drop-shadow(0 0 10px hsl(190 92% 56% / 0.22));
+  }
 }
 
 .header-status-meta {
@@ -1256,8 +1281,11 @@ textarea:focus {
 
 .log-card {
   grid-template-rows: auto minmax(0, 1fr);
-  min-height: 150px;
-  max-height: 170px;
+  height: 220px;
+  min-height: 170px;
+  max-height: none;
+  resize: vertical;
+  overflow: auto;
 }
 
 #accounts-panel,
@@ -1329,6 +1357,7 @@ textarea:focus {
 .log-output,
 .proxy-log-output {
   min-height: 0;
+  height: 100%;
   margin: 0;
   padding: 10px 12px;
   overflow: auto;

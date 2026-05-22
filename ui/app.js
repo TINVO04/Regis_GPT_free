@@ -17,6 +17,7 @@ const el = {
   preflightSummaryText: document.getElementById('preflight-summary-text'),
   preflightList: document.getElementById('preflight-list'),
   smsKey: document.getElementById('sms-key-input'),
+  smsCountry: document.getElementById('sms-country-select'),
   smsBalanceCard: document.getElementById('sms-balance-card'),
   smsBalanceValue: document.getElementById('sms-balance-value'),
   smsBalanceMeta: document.getElementById('sms-balance-meta'),
@@ -229,6 +230,7 @@ function initRuntimeInputs() {
     0,
     runtimeInputs.length,
     el.smsKey,
+    el.smsCountry,
     el.smsBalanceCheckBtn,
     el.smsPoolOpenBtn,
     el.clonemupKey,
@@ -1002,6 +1004,10 @@ async function openDataFile(kind, label) {
 
 function renderRuntimeConfig(config = {}) {
   if (config.smspool_key !== undefined) el.smsKey.value = config.smspool_key || '';
+  if (el.smsCountry) {
+    const savedSmsCountry = Number.parseInt(config.smspool_country ?? 1, 10) || 1;
+    el.smsCountry.value = [1, 9].includes(savedSmsCountry) ? `${savedSmsCountry}` : '1';
+  }
   if (config.password !== undefined) el.password.value = config.password || '';
   if (config.router_password !== undefined) el.routerPassword.value = config.router_password || '';
   if (el.verifyProvider && config.verify_provider !== undefined) el.verifyProvider.value = normalizeVerifyProvider(config.verify_provider);
@@ -1209,7 +1215,7 @@ function renderSms(rows) {
   const total = state.rows.length;
   const used = state.rows.filter((row) => Number(row.usageCount || 0) > 0).length;
   const unused = total - used;
-  const filtered = filterRows(state.rows, state.query, (row) => `${row.orderId || ''} ${row.phoneNumber || ''} ${row.updatedAt || ''}`);
+  const filtered = filterRows(state.rows, state.query, (row) => `${row.orderId || ''} ${row.phoneNumber || ''} ${row.countryName || ''} ${row.countryCode || ''} ${row.dialCode || ''} ${row.updatedAt || ''}`);
   const pageData = paginateRows(filtered, state.page, state.pageSize);
   state.page = pageData.page;
 
@@ -1225,13 +1231,14 @@ function renderSms(rows) {
         <td class="cell-index" title="${escapeAttr(row.index ?? '')}">${escapeHtml(row.index ?? '')}</td>
         <td class="cell-text" title="${escapeAttr(row.orderId || '')}">${state.editing ? tableInput('sms', rowIndex, 'orderId', row.orderId) : escapeHtml(row.orderId || '')}</td>
         <td class="cell-text" title="${escapeAttr(row.phoneNumber || '')}">${state.editing ? tableInput('sms', rowIndex, 'phoneNumber', row.phoneNumber) : escapeHtml(row.phoneNumber || '')}</td>
+        <td class="cell-text" title="${escapeAttr(`${row.countryName || ''} ${row.dialCode || ''}`.trim())}">${state.editing ? tableInput('sms', rowIndex, 'country', row.country || 1, 'number') : escapeHtml(`${row.countryName || `ID ${row.country || 1}`} ${row.dialCode || ''}`.trim())}</td>
         <td class="cell-number" title="${escapeAttr(row.usageCount ?? '')}">${state.editing ? tableInput('sms', rowIndex, 'usageCount', row.usageCount, 'number') : escapeHtml(row.usageCount ?? '')}</td>
         <td class="cell-date" title="${escapeAttr(row.updatedAt || '')}">${state.editing ? tableInput('sms', rowIndex, 'updatedAt', row.updatedAt) : escapeHtml(row.updatedAt || '')}</td>
         <td class="cell-action">${state.editing ? deleteRowButton('sms', rowIndex) : ''}</td>
       </tr>
     `;
     }).join('')
-    : emptyRow(6, state.query ? 'Không tìm thấy order/phone phù hợp' : 'Chưa có dữ liệu sms_state.json');
+    : emptyRow(7, state.query ? 'Không tìm thấy order/phone/country phù hợp' : 'Chưa có dữ liệu sms_state.json');
 
   renderPager(el.smsPager, 'sms', pageData.page, pageData.totalPages, filtered.length, pageData.start, pageData.rows);
 }
@@ -1540,6 +1547,7 @@ function getConfigPayload() {
   const randomMailDomainChecked = el.mode?.value === 'create_pay_unlink' ? false : el.randomMailDomain?.checked === true;
   return {
     smspoolKey: el.smsKey.value.trim(),
+    smsPoolCountry: [1, 9].includes(Number.parseInt(el.smsCountry?.value || '1', 10)) ? Number.parseInt(el.smsCountry?.value || '1', 10) : 1,
     clonemupApiKey: el.clonemupKey?.value.trim() || '',
     clonemupHotmailProductId: Math.max(1, Number.parseInt(el.clonemupProductId?.value || '7614', 10) || 7614),
     khommoApiKey: el.khommoKey?.value.trim() || '',
@@ -1660,8 +1668,12 @@ async function handleRun() {
     pushLog('[Proxy] One-to-one đang bật. Lưu ý: 9Router cần có từ 2 proxy trở lên để Apply Proxy → One-to-one (rotate) hoạt động ổn định. Tool sẽ tiếp tục chạy.');
   }
 
+  const smsCountryLabels = {
+    1: 'United States (+1)',
+    9: 'Indonesia (+62)',
+  };
   setRunningState(true, `Running: ${payload.mode}`);
-  pushLog(`[UI] Start run mode=${payload.mode}, count=${payload.count}, verifyProvider=${payload.verifyProvider === 'cliproxyapi' ? 'CLIProxyAPI' : '9Router'}`);
+  pushLog(`[UI] Start run mode=${payload.mode}, count=${payload.count}, smsCountry=${smsCountryLabels[payload.smsPoolCountry] || `ID ${payload.smsPoolCountry}`}, verifyProvider=${payload.verifyProvider === 'cliproxyapi' ? 'CLIProxyAPI' : '9Router'}`);
   if (payload.verifyProvider === 'cliproxyapi') {
     pushLog('[CLIProxyAPI] App sẽ chạy từng account riêng: trước mỗi account bắt OAuth URL mới, account xong thì đóng process callback cũ.');
   }
@@ -1836,6 +1848,10 @@ async function handleSaveConfig() {
 
     if (result.config) {
       el.smsKey.value = `${result.config.smspool_key || ''}`;
+      if (el.smsCountry) {
+        const savedSmsCountry = Number.parseInt(result.config.smspool_country ?? 1, 10) || 1;
+        el.smsCountry.value = [1, 9].includes(savedSmsCountry) ? `${savedSmsCountry}` : '1';
+      }
       el.password.value = `${result.config.password || ''}`;
       el.routerPassword.value = `${result.config.router_password || '123456'}`;
       el.mailDomain.value = `${result.config.selected_mail_domain || 'thangterter.online'}`;

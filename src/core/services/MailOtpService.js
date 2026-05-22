@@ -1,6 +1,8 @@
  import { authenticator } from 'otplib';
 
 export class MailOtpService {
+  static onStaleHotmailOtp = null;
+
   static TMAIL_PROVIDERS = {
     'mail1h.com': {
       label: 'mail1h',
@@ -373,7 +375,7 @@ export class MailOtpService {
     oauthMessagesEndpointUrl = 'https://tools.dongvanfb.net/api/get_messages_oauth2',
     graphMessagesEndpointUrl = 'https://tools.dongvanfb.net/api/graph_messages',
     type = 'all',
-    maxRetries = 7,
+    maxRetries = 5,
     delay = 5,
     maxOtpAgeSeconds = 60,
     shouldStop = () => false,
@@ -409,7 +411,7 @@ export class MailOtpService {
       return Number.isNaN(isoTime) ? null : isoTime;
     };
     const parsedMaxRetries = Number.parseInt(maxRetries, 10);
-    const normalizedMaxRetries = Math.min(7, Math.max(1, Number.isNaN(parsedMaxRetries) ? 7 : parsedMaxRetries));
+    const normalizedMaxRetries = Math.min(5, Math.max(1, Number.isNaN(parsedMaxRetries) ? 5 : parsedMaxRetries));
     const parsedDelay = Number.parseInt(delay, 10);
     const normalizedDelay = Math.max(1, Number.isNaN(parsedDelay) ? 5 : parsedDelay);
     const parsedMaxOtpAgeSeconds = Number.parseInt(maxOtpAgeSeconds, 10);
@@ -528,9 +530,42 @@ export class MailOtpService {
     };
 
     this.log(`✉️ Hotmail OTP: đang request mailbox messages cho ${requestEmail} mỗi retry...`);
+    let staleOtpFastResendSent = false;
+
+    const triggerFastResendForStaleOtp = async ({ attempt, otp, ageSeconds }) => {
+      if (staleOtpFastResendSent) return false;
+      staleOtpFastResendSent = true;
+      const payload = {
+        attempt: attempt + 1,
+        maxRetries: normalizedMaxRetries,
+        email: requestEmail,
+        reason: 'stale_hotmail_otp',
+        immediate: true,
+        otp: otp?.code || '',
+        ageSeconds,
+      };
+      let clickedResend = false;
+      if (typeof MailOtpService.onStaleHotmailOtp === 'function') {
+        clickedResend = await MailOtpService.onStaleHotmailOtp(payload).catch((error) => {
+          this.log(`⚠️ Hotmail OTP fast-resend UI hook lỗi: ${error.message}`, 'WARNING');
+          return false;
+        });
+      }
+      if (clickedResend) {
+        this.log(`🔁 Hotmail OTP cũ ${otp?.code || ''} age=${ageSeconds}s; đã bấm Resend email ngay để lấy OTP mới.`);
+        return true;
+      }
+      if (typeof onRetry !== 'function') return false;
+      this.log(`🔁 Hotmail OTP cũ ${otp?.code || ''} age=${ageSeconds}s; gọi retry hook resend sớm để lấy OTP mới.`);
+      await onRetry(payload).catch((error) => {
+        this.log(`⚠️ Hotmail OTP fast-resend hook lỗi: ${error.message}`, 'WARNING');
+      });
+      return true;
+    };
 
     for (let attempt = 0; attempt < normalizedMaxRetries; attempt += 1) {
       if (shouldStop()) return null;
+      let fastResendClickedThisAttempt = false;
 
       for (const endpoint of endpoints) {
         if (shouldStop()) return null;
@@ -549,6 +584,8 @@ export class MailOtpService {
             if (normalizedMaxOtpAgeSeconds > 0 && ageMs > maxOtpAgeMs) {
               const ageSeconds = Math.max(0, Math.round(ageMs / 1000));
               this.log(`⏳ Bỏ qua Hotmail OTP cũ quá ${normalizedMaxOtpAgeSeconds}s cho ${requestEmail}: ${otp.code} (${otp.date}, age=${ageSeconds}s). Chờ OTP mới...`, 'WARNING');
+              fastResendClickedThisAttempt = await triggerFastResendForStaleOtp({ attempt, otp, ageSeconds }) || fastResendClickedThisAttempt;
+              if (fastResendClickedThisAttempt) break;
               continue;
             }
             if (ageMs < -60 * 1000) {
@@ -566,6 +603,12 @@ export class MailOtpService {
         } catch (error) {
           if (attempt % 3 === 0) this.log(`⚠️ Hotmail ${endpoint.label} lỗi tạm thời cho ${normalizedEmail}: ${error.message}`, 'WARNING');
         }
+        if (fastResendClickedThisAttempt) break;
+      }
+
+      if (fastResendClickedThisAttempt) {
+        await this.sleep(Math.min(2, normalizedDelay) * 1000);
+        continue;
       }
 
       if (attempt < normalizedMaxRetries - 1) {

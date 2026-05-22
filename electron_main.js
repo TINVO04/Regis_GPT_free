@@ -37,8 +37,8 @@ app.commandLine.appendSwitch('disable-software-rasterizer');
 app.commandLine.appendSwitch('disable-gpu-compositing');
 app.commandLine.appendSwitch('disable-gpu-rasterization');
 
-const PUBLIC_UPDATE_REPO_OWNER = 'NDuyPhuc';
-const PUBLIC_UPDATE_REPO_NAME = 'CodexAccountStudio-Releases';
+const PUBLIC_UPDATE_REPO_OWNER = 'TINVO04';
+const PUBLIC_UPDATE_REPO_NAME = 'Regis_GPT_free';
 const PUBLIC_RELEASES_URL = `https://github.com/${PUBLIC_UPDATE_REPO_OWNER}/${PUBLIC_UPDATE_REPO_NAME}/releases`;
 
 let mainWindow = null;
@@ -46,6 +46,7 @@ let activeRun = null;
 let isRunning = false;
 let runMeta = null;
 let latestRunFailure = null;
+let currentSmsPoolCountry = SMSPoolService.normalizeCountry(12);
 let workspaceState = null;
 let preflightState = null;
 let authState = {
@@ -401,14 +402,21 @@ function parseSmsStateFile(smsPath) {
     const data = JSON.parse(raw);
     const normalized = Array.isArray(data) ? data : data && typeof data === 'object' ? [data] : [];
 
-    return normalized.map((item, index) => ({
-      id: `${item.orderId || 'no-order'}-${index + 1}`,
-      index: index + 1,
-      orderId: item.orderId || '',
-      phoneNumber: item.phoneNumber || '',
-      usageCount: Number(item.usageCount || 0),
-      updatedAt: item.updatedAt || '',
-    }));
+    return normalized.map((item, index) => {
+      const country = SMSPoolService.normalizeCountry(item.country ?? item.smsPoolCountry ?? item.countryId ?? 1);
+      return {
+        id: `${item.orderId || 'no-order'}-${index + 1}`,
+        index: index + 1,
+        orderId: item.orderId || '',
+        phoneNumber: item.phoneNumber || '',
+        country: country.id,
+        countryName: country.name,
+        countryCode: country.code,
+        dialCode: country.dialCode,
+        usageCount: Number(item.usageCount || 0),
+        updatedAt: item.updatedAt || '',
+      };
+    });
   } catch {
     return [];
   }
@@ -500,12 +508,18 @@ function removeHotmailOnOtpExhaustedLog(line = '') {
   if (!email || attempts < maxRetries || maxRetries < 5) return false;
   const removedHotmail = getHotmailRepository().deleteAccount(email);
   const removedAccount = removeAccountTxtEmail(email);
+  rememberRemovedHotmail(email, 'otp_exhausted_log');
+  if (ChatGPTAccountCreatorCore?.prototype) {
+    ChatGPTAccountCreatorCore.prototype.__hotmailOtpExhausted = true;
+    ChatGPTAccountCreatorCore.prototype.__hotmailOtpExhaustedEmail = email;
+  }
   if (removedHotmail || removedAccount) {
-    rememberRemovedHotmail(email, 'otp_exhausted_log');
     sendToRenderer('log:line', { line: `[Hotmail] Đã loại ${email} khỏi ${removedHotmail ? 'accounts-hotmail.txt' : ''}${removedHotmail && removedAccount ? ' và ' : ''}${removedAccount ? 'accounts.txt' : ''} vì chờ OTP hết ${attempts}/${maxRetries} vẫn không có.` });
     sendToRenderer('data:changed', readWorkspaceData());
+  } else {
+    sendToRenderer('log:line', { line: `[Hotmail] ${email} đã bị đánh dấu chết vì chờ OTP hết ${attempts}/${maxRetries}; dừng retry verify mail này.` });
   }
-  return removedHotmail || removedAccount;
+  return true;
 }
 
 function maskSecret(value, visible = 6) {
@@ -536,12 +550,19 @@ function serializeAccountsRows(rows = []) {
 function serializeSmsRows(rows = []) {
   if (!Array.isArray(rows)) throw new Error('SMS payload không hợp lệ.');
   return rows
-    .map((row) => ({
-      orderId: `${row?.orderId || ''}`.trim(),
-      phoneNumber: `${row?.phoneNumber || ''}`.trim(),
-      usageCount: Math.max(0, Number.parseInt(row?.usageCount ?? 0, 10) || 0),
-      updatedAt: `${row?.updatedAt || ''}`.trim() || new Date().toISOString(),
-    }))
+    .map((row) => {
+      const country = SMSPoolService.normalizeCountry(row?.country ?? row?.smsPoolCountry ?? row?.countryId ?? 1);
+      return {
+        orderId: `${row?.orderId || ''}`.trim(),
+        phoneNumber: `${row?.phoneNumber || ''}`.trim(),
+        country: country.id,
+        countryName: country.name,
+        countryCode: country.code,
+        dialCode: country.dialCode,
+        usageCount: Math.max(0, Number.parseInt(row?.usageCount ?? 0, 10) || 0),
+        updatedAt: `${row?.updatedAt || ''}`.trim() || new Date().toISOString(),
+      };
+    })
     .filter((row) => row.orderId && row.phoneNumber);
 }
 
@@ -944,6 +965,11 @@ function configureAutoUpdater() {
   if (updaterInitialized) return;
   updaterInitialized = true;
 
+  autoUpdater.setFeedURL({
+    provider: 'github',
+    owner: PUBLIC_UPDATE_REPO_OWNER,
+    repo: PUBLIC_UPDATE_REPO_NAME,
+  });
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = true;
   autoUpdater.allowPrerelease = false;
@@ -1409,6 +1435,7 @@ function normalizeConfigPatch(payload = {}) {
 
   return {
     smspool_key: keepSecret(payload?.smspoolKey, current.smspool_key),
+    smspool_country: Math.max(1, Number.parseInt(payload?.smsPoolCountry ?? current.smspool_country ?? 12, 10) || 12),
     password: keepString(payload?.password, current.password, '@1234567890a'),
     selected_mail_domain: keepLowerString(payload?.selectedMailDomain, current.selected_mail_domain, 'thangterter.online'),
     random_mail_domain: payload?.randomMailDomain === true,
@@ -1618,6 +1645,11 @@ ipcMain.handle('run:start', async (_event, payload) => {
   const mode = payload?.mode || 'create_verify';
   const savedConfig = readJsonFile(workspaceState.configFile, {});
   const smspoolKey = (payload?.smspoolKey || '').trim();
+  const requestedSmsPoolCountry = payload?.smsPoolCountry ?? savedConfig.smspool_country ?? 12;
+  const smsPoolCountry = SMSPoolService.normalizeCountry(requestedSmsPoolCountry);
+  currentSmsPoolCountry = smsPoolCountry;
+  SMSPoolService.onStatus = (line) => sendToRenderer('log:line', { line });
+  sendToRenderer('log:line', { line: `[SMSPool] Country RUN hiện tại: ${smsPoolCountry.name} (${smsPoolCountry.dialCode}) • ID ${smsPoolCountry.id}` });
   const password = (payload?.password || '').trim();
   const routerPassword = `${payload?.routerPassword || ''}`.trim();
   const vpnEnabled = payload?.vpnEnabled !== false;
@@ -1675,6 +1707,72 @@ ipcMain.handle('run:start', async (_event, payload) => {
       };
     }
 
+    const detectIncorrectEmailOtp = async (page) => {
+      if (!page) return false;
+      return page.locator('body').innerText({ timeout: 1000 }).then((text) => /incorrect\s+code|invalid\s+code|wrong\s+code|mã\s+(?:không\s+đúng|sai)|code\s+is\s+incorrect/i.test(`${text || ''}`)).catch(() => false);
+    };
+
+    const clickResendEmailOnOtpPage = async (page) => {
+      if (!page) return false;
+      const resendSelectors = [
+        'button:has-text("Resend email")',
+        'a:has-text("Resend email")',
+        'button:has-text("Resend code")',
+        'a:has-text("Resend code")',
+        'button:has-text("Send again")',
+        'a:has-text("Send again")',
+      ];
+      for (const selector of resendSelectors) {
+        const locator = page.locator(selector).first();
+        if (await locator.isVisible({ timeout: 600 }).catch(() => false)) {
+          await locator.click({ timeout: 3000, force: true }).catch(() => {});
+          return true;
+        }
+      }
+      return false;
+    };
+
+    const resolveActiveHotmailOtpPage = async () => {
+      const directPage = ChatGPTAccountCreatorCore.prototype.__activeHotmailOtpPage || null;
+      if (directPage && !directPage.isClosed?.()) return directPage;
+      const candidates = [
+        ChatGPTAccountCreatorCore.prototype.__currentCreatePage,
+        ...(ChatGPTAccountCreatorCore.prototype.__trackedHotmailOtpPages || []),
+      ].filter(Boolean);
+      for (const candidate of candidates) {
+        if (candidate.isClosed?.()) continue;
+        const hasOtpUi = await candidate.locator('input[name="code"], input[inputmode="numeric"], input[autocomplete="one-time-code"], button:has-text("Resend email"), a:has-text("Resend email"), button:has-text("Resend code"), a:has-text("Resend code")').first().isVisible({ timeout: 350 }).catch(() => false);
+        if (hasOtpUi) return candidate;
+      }
+      return null;
+    };
+
+    MailOtpService.onStaleHotmailOtp = async ({ email = '', otp = '', ageSeconds = 0 } = {}) => {
+      const currentEmail = `${email || ''}`.trim().toLowerCase();
+      const page = await resolveActiveHotmailOtpPage();
+      const pageEmail = `${ChatGPTAccountCreatorCore.prototype.__activeHotmailOtpEmail || ''}`.trim().toLowerCase();
+      if (!page || !currentEmail || (pageEmail && pageEmail !== currentEmail)) return false;
+      const resent = await clickResendEmailOnOtpPage(page).catch(() => false);
+      if (!resent) return false;
+      ChatGPTAccountCreatorCore.prototype.__activeHotmailOtpPage = page;
+      sendToRenderer('log:line', { line: `[Hotmail] OTP cũ ${otp || ''}${ageSeconds ? ` age=${ageSeconds}s` : ''}; đã bấm Resend email ngay cho ${email}.` });
+      return true;
+    };
+
+    const originalDetectPopupAuthStep = ChatGPTAccountCreatorCore.prototype.detectPopupAuthStep;
+    if (typeof originalDetectPopupAuthStep === 'function') {
+      ChatGPTAccountCreatorCore.prototype.detectPopupAuthStep = async function patchedDetectPopupAuthStep(page, ...args) {
+        const state = await originalDetectPopupAuthStep.call(this, page, ...args);
+        const step = `${state?.step || ''}`.toLowerCase();
+        const otpKind = `${state?.otpKind || ''}`.toLowerCase();
+        if (/otp|code/.test(step) || otpKind === 'email') {
+          ChatGPTAccountCreatorCore.prototype.__activeHotmailOtpPage = page || null;
+          if (this.__activeVerifyEmail) ChatGPTAccountCreatorCore.prototype.__activeHotmailOtpEmail = this.__activeVerifyEmail;
+        }
+        return state;
+      };
+    }
+
     const originalGetHotmailOauthCode = ChatGPTAccountCreatorCore.prototype.getHotmailOauthCode;
     if (typeof originalGetHotmailOauthCode === 'function') {
       ChatGPTAccountCreatorCore.prototype.getHotmailOauthCode = async function patchedGetHotmailOauthCode(hotmailAccount, ...args) {
@@ -1686,30 +1784,73 @@ ipcMain.handle('run:start', async (_event, payload) => {
         if (isRecentlyRemovedHotmail(email) || (email && !getHotmailRepository().findByEmail(email))) {
           this.log?.(`[Hotmail] ${email} đã bị loại khỏi accounts-hotmail.txt trước đó, dừng retry OTP cho mail này ngay để tránh chạy lặp.`, 'WARNING');
           removeAccountTxtPending(email);
-          return null;
+          ChatGPTAccountCreatorCore.prototype.__hotmailOtpExhausted = true;
+          ChatGPTAccountCreatorCore.prototype.__hotmailOtpExhaustedEmail = email;
+          throw new Error(`HOTMAIL_OTP_EXHAUSTED:${email}`);
+        }
+
+        if (this.__currentCreatePage) {
+          ChatGPTAccountCreatorCore.prototype.__currentCreatePage = this.__currentCreatePage;
+          if (!ChatGPTAccountCreatorCore.prototype.__trackedHotmailOtpPages) ChatGPTAccountCreatorCore.prototype.__trackedHotmailOtpPages = [];
+          if (!ChatGPTAccountCreatorCore.prototype.__trackedHotmailOtpPages.includes(this.__currentCreatePage)) {
+            ChatGPTAccountCreatorCore.prototype.__trackedHotmailOtpPages.unshift(this.__currentCreatePage);
+            ChatGPTAccountCreatorCore.prototype.__trackedHotmailOtpPages = ChatGPTAccountCreatorCore.prototype.__trackedHotmailOtpPages.slice(0, 4);
+          }
+        }
+        ChatGPTAccountCreatorCore.prototype.__activeHotmailOtpPage = this.__currentCreatePage || ChatGPTAccountCreatorCore.prototype.__activeHotmailOtpPage || null;
+        ChatGPTAccountCreatorCore.prototype.__activeHotmailOtpEmail = email;
+
+        if (isCreateFlow && email && this.__currentCreatePage) {
+          const resendKey = email.toLowerCase();
+          if (!this.__createHotmailOtpFastResentEmails) this.__createHotmailOtpFastResentEmails = new Set();
+          if (!this.__createHotmailOtpFastResentEmails.has(resendKey)) {
+            this.__createHotmailOtpFastResentEmails.add(resendKey);
+            await this.sleep?.(1200);
+            const resent = await clickResendEmailOnOtpPage(this.__currentCreatePage).catch(() => false);
+            if (resent) {
+              this.log?.(`[Hotmail] Create: đã bấm Resend email sớm cho ${email} trước khi chờ mailbox để tránh kẹt OTP cũ.`, 'WARNING');
+              await this.sleep?.(2500);
+            }
+          }
         }
 
         const firstCode = await originalGetHotmailOauthCode.call(this, hotmailAccount, ...args);
         if (firstCode || !email) return firstCode;
 
         if (isCreateFlow) {
-          this.log?.(`[Hotmail] Create: ${email} hết OTP 7/7, bỏ mail này ngay và chuyển sang Hotmail mới, không login/chờ lại.`, 'WARNING');
+          this.log?.(`[Hotmail] Create: ${email} hết OTP 5/5, bỏ mail này ngay và chuyển sang Hotmail mới, không login/chờ lại.`, 'WARNING');
           if (typeof this.removeHotmailAccount === 'function') this.removeHotmailAccount(email);
           rememberRemovedHotmail(email, 'create_hotmail_otp_failed');
+          ChatGPTAccountCreatorCore.prototype.__hotmailOtpExhausted = true;
+          ChatGPTAccountCreatorCore.prototype.__hotmailOtpExhaustedEmail = email;
           throw new Error(`HOTMAIL_OTP_EXHAUSTED:${email}`);
         }
 
         if (isVerifyFlow) {
-          this.log?.(`[Hotmail] Verify: ${email} chưa lấy được OTP sau 7/7, retry login/get OTP thêm 1 lần trước khi bỏ mail.`, 'WARNING');
+          this.log?.(`[Hotmail] Verify: ${email} chưa lấy được OTP sau 5/5, retry login/get OTP thêm 1 lần trước khi bỏ mail.`, 'WARNING');
           const secondCode = await originalGetHotmailOauthCode.call(this, hotmailAccount, ...args);
           if (secondCode) return secondCode;
           this.log?.(`[Hotmail] Verify: ${email} vẫn không có OTP sau retry, bỏ mail này và chuyển sang Hotmail mới.`, 'WARNING');
           if (typeof this.removeHotmailAccount === 'function') this.removeHotmailAccount(email);
           rememberRemovedHotmail(email, 'verify_hotmail_otp_failed');
+          ChatGPTAccountCreatorCore.prototype.__hotmailOtpExhausted = true;
+          ChatGPTAccountCreatorCore.prototype.__hotmailOtpExhaustedEmail = email;
           throw new Error(`HOTMAIL_OTP_EXHAUSTED:${email}`);
         }
 
         return null;
+      };
+    }
+
+    const originalWaitBeforeWorkflowRetry = ChatGPTAccountCreatorCore.prototype.waitBeforeWorkflowRetry;
+    if (typeof originalWaitBeforeWorkflowRetry === 'function') {
+      ChatGPTAccountCreatorCore.prototype.waitBeforeWorkflowRetry = async function patchedWaitBeforeWorkflowRetry(...args) {
+        const exhaustedEmail = this.__hotmailOtpExhaustedEmail || ChatGPTAccountCreatorCore.prototype.__hotmailOtpExhaustedEmail || '';
+        if ((this.__hotmailOtpExhausted === true || ChatGPTAccountCreatorCore.prototype.__hotmailOtpExhausted === true) && exhaustedEmail) {
+          this.log?.(`[Hotmail] ${exhaustedEmail} đã bị loại vì OTP hết 5/5; chặn retry workflow để không chạy lại cùng mail đã xoá.`, 'WARNING');
+          throw new Error(`HOTMAIL_OTP_EXHAUSTED:${exhaustedEmail}`);
+        }
+        return originalWaitBeforeWorkflowRetry.call(this, ...args);
       };
     }
 
@@ -1721,12 +1862,12 @@ ipcMain.handle('run:start', async (_event, payload) => {
 
     const normalizeCreateOtpRetries = (value) => {
       const parsed = Number.parseInt(value, 10);
-      return Math.min(7, Math.max(1, Number.isNaN(parsed) ? 7 : parsed));
+      return Math.min(5, Math.max(1, Number.isNaN(parsed) ? 5 : parsed));
     };
 
     const originalGetVerificationCode = ChatGPTAccountCreatorCore.prototype.getVerificationCode;
     if (typeof originalGetVerificationCode === 'function') {
-      ChatGPTAccountCreatorCore.prototype.getVerificationCode = function patchedGetVerificationCode(email, maxRetries = 7, delay = 5, options = {}) {
+      ChatGPTAccountCreatorCore.prototype.getVerificationCode = function patchedGetVerificationCode(email, maxRetries = 5, delay = 5, options = {}) {
         return originalGetVerificationCode.call(this, email, normalizeCreateOtpRetries(maxRetries), delay, options);
       };
     }
@@ -1734,7 +1875,7 @@ ipcMain.handle('run:start', async (_event, payload) => {
     const originalClickResendEmailIfVisible = ChatGPTAccountCreatorCore.prototype.clickResendEmailIfVisible;
     if (typeof originalClickResendEmailIfVisible === 'function') {
       ChatGPTAccountCreatorCore.prototype.clickResendEmailIfVisible = function patchedClickResendEmailIfVisible(page, label = 'email verification') {
-        const normalizedLabel = `${label || ''}`.replace(/(tạo account\s*\()(\d+)\/\d+(\))/i, (_match, prefix, attempt, suffix) => `${prefix}${Math.min(7, Number.parseInt(attempt, 10) || 1)}/7${suffix}`);
+        const normalizedLabel = `${label || ''}`.replace(/(tạo account\s*\()(\d+)\/\d+(\))/i, (_match, prefix, attempt, suffix) => `${prefix}${Math.min(5, Number.parseInt(attempt, 10) || 1)}/5${suffix}`);
         return originalClickResendEmailIfVisible.call(this, page, normalizedLabel || label);
       };
     }
@@ -1826,6 +1967,31 @@ ipcMain.handle('run:start', async (_event, payload) => {
   const patchCreateOtpProfileOrder = () => {
     if (ChatGPTAccountCreatorCore.prototype.__createOtpProfileOrderPatched) return;
 
+    const detectIncorrectEmailOtpOnCreatePage = async (page) => {
+      if (!page) return false;
+      return page.locator('body').innerText({ timeout: 1000 }).then((text) => /incorrect\s+code|invalid\s+code|wrong\s+code|mã\s+(?:không\s+đúng|sai)|code\s+is\s+incorrect/i.test(`${text || ''}`)).catch(() => false);
+    };
+
+    const clickResendEmailOnCreateOtpPage = async (page) => {
+      if (!page) return false;
+      const resendSelectors = [
+        'button:has-text("Resend email")',
+        'a:has-text("Resend email")',
+        'button:has-text("Resend code")',
+        'a:has-text("Resend code")',
+        'button:has-text("Send again")',
+        'a:has-text("Send again")',
+      ];
+      for (const selector of resendSelectors) {
+        const locator = page.locator(selector).first();
+        if (await locator.isVisible({ timeout: 600 }).catch(() => false)) {
+          await locator.click({ timeout: 3000, force: true }).catch(() => {});
+          return true;
+        }
+      }
+      return false;
+    };
+
     const delayedProfiles = new WeakMap();
     const originalFillSignupProfile = ChatGPTAccountCreatorCore.prototype.fillSignupProfile;
     if (typeof originalFillSignupProfile === 'function') {
@@ -1876,6 +2042,17 @@ ipcMain.handle('run:start', async (_event, payload) => {
         const result = await originalClickLocatorWithRetry.call(this, locator, options);
         const isMailOtpSubmit = /OTP\s*mail|submit\s+(?:lại\s+)?sau\s+OTP|sau\s+OTP\s+mail/i.test(label);
         if (isMailOtpSubmit) {
+          await this.sleep?.(1200);
+          const page = typeof locator?.page === 'function' ? locator.page() : this.__currentCreatePage;
+          if (await detectIncorrectEmailOtpOnCreatePage(page)) {
+            this.__mailOtpSubmittedForCreateSuccess = false;
+            this.__mailOtpSubmittedAt = 0;
+            this.__createCompletedAfterMailOtpProfileSubmit = false;
+            this.__createCompletedAfterMailOtpProfileSubmitAt = 0;
+            this.log?.('❌ OpenAI báo Incorrect code sau OTP mail. Bấm Resend email và lấy OTP mới, không chuyển sang chờ SMS.', 'WARNING');
+            await clickResendEmailOnCreateOtpPage(page);
+            throw new Error('EMAIL_OTP_INCORRECT_RETRY');
+          }
           this.__mailOtpSubmittedForCreateSuccess = true;
           this.__mailOtpSubmittedAt = Date.now();
         }
@@ -1963,21 +2140,212 @@ ipcMain.handle('run:start', async (_event, payload) => {
       return null;
     };
 
-    const fillPhoneNumberOnCurrentPage = async (core, page, smsItem) => {
-      const phoneNumber = `${smsItem?.phoneNumber || ''}`.trim();
-      if (!page || !phoneNumber) return false;
+    const getConfiguredPhoneCountry = () => {
+      const country = SMSPoolService.normalizeCountry(currentSmsPoolCountry?.id ?? currentSmsPoolCountry ?? 12);
+      return {
+        country: country.id,
+        countryName: country.name,
+        dialCode: country.dialCode,
+        countryCode: country.code,
+      };
+    };
 
-      await core.selectUsPhoneCountry?.(page).catch(() => false);
-      const phoneInput = await getPhoneInputLocator(page);
-      if (!phoneInput) return false;
+    const getSelectedPhoneCountryText = async (page) => {
+      if (!page) return '';
+      return page.evaluate(() => {
+        const countryPattern = /United States|Philippines|Indonesia|Georgia|Kazakhstan|\+1|\+63|\+62|\+995|\+7/i;
+        const isVisible = (el) => {
+          if (!el) return false;
+          const style = window.getComputedStyle(el);
+          const rect = el.getBoundingClientRect();
+          return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
+        };
+        const isDropdownOption = (el) => {
+          const role = `${el.getAttribute('role') || ''}`.toLowerCase();
+          if (role === 'option' || role === 'menuitem') return true;
+          return Boolean(el.closest('[role="listbox"], [role="menu"]'));
+        };
+        const nodes = Array.from(document.querySelectorAll('button, [role="button"], [role="combobox"], [aria-haspopup="listbox"], [aria-haspopup="menu"]'));
+        for (const el of nodes) {
+          if (!isVisible(el) || isDropdownOption(el)) continue;
+          const text = `${el.innerText || el.textContent || el.getAttribute('aria-label') || ''}`.replace(/\s+/g, ' ').trim();
+          if (countryPattern.test(text)) return text;
+        }
+        return '';
+      }).catch(() => '');
+    };
 
+    const isConfiguredPhoneCountrySelected = async (page) => {
+      const country = getConfiguredPhoneCountry();
+      const selectedText = await getSelectedPhoneCountryText(page);
+      const dialPattern = country.dialCode.replace('+', '\\+');
+      return new RegExp(`${country.countryName}|${dialPattern}`, 'i').test(selectedText);
+    };
+
+    const clickConfiguredPhoneCountryOption = async (page) => {
+      const country = getConfiguredPhoneCountry();
+      const optionSelectors = [
+        `[role="option"]:has-text("${country.countryName}")`,
+        `[role="menuitem"]:has-text("${country.countryName}")`,
+        `[role="option"]:has-text("${country.dialCode}")`,
+        `[role="menuitem"]:has-text("${country.dialCode}")`,
+        `li:has-text("${country.countryName}")`,
+        `button:has-text("${country.countryName}")`,
+        `div:has-text("${country.countryName}"):has-text("${country.dialCode}")`,
+      ];
+
+      for (const selector of optionSelectors) {
+        const locators = await page.locator(selector).all().catch(() => []);
+        for (const option of locators) {
+          if (await option.isVisible({ timeout: 700 }).catch(() => false)) {
+            await option.scrollIntoViewIfNeeded({ timeout: 2000 }).catch(() => {});
+            await option.click({ timeout: 5000, force: true }).catch(async () => {
+              await page.keyboard.press('Enter').catch(() => {});
+            });
+            return true;
+          }
+        }
+      }
+      return false;
+    };
+
+    const selectConfiguredPhoneCountry = async (core, page) => {
+      if (!page) return false;
+      const country = getConfiguredPhoneCountry();
+      const dialPattern = country.dialCode.replace('+', '\\+');
+      const selectedBefore = await getSelectedPhoneCountryText(page);
+      if (await isConfiguredPhoneCountrySelected(page)) {
+        core?.log?.(`✅ Phone country đã là ${country.countryName} (${country.dialCode}).`);
+        return true;
+      }
+
+      const dropdownSelectors = [
+        'button:has-text("United States")',
+        'button:has-text("+1")',
+        'button:has-text("US")',
+        'button:has-text("Vietnam")',
+        'button:has-text("+84")',
+        '[role="button"]:has-text("United States")',
+        '[role="button"]:has-text("+1")',
+        '[aria-haspopup="listbox"]',
+        '[aria-haspopup="menu"]',
+        '[role="combobox"]',
+      ];
+
+      let opened = false;
+      for (const selector of dropdownSelectors) {
+        const dropdown = page.locator(selector).first();
+        if (await dropdown.isVisible({ timeout: 900 }).catch(() => false)) {
+          await dropdown.click({ timeout: 5000, force: true }).catch(() => {});
+          opened = true;
+          break;
+        }
+      }
+
+      if (!opened) {
+        core?.log?.(`❌ Không thấy dropdown country phone để chọn ${country.countryName}; không nhập số để tránh sai country.`, 'ERROR');
+        return false;
+      }
+
+      await core?.sleep?.(700);
+      const searchInput = page.locator('input[placeholder*="Search" i], input[type="search"], input[aria-label*="Search" i]').first();
+      if (await searchInput.isVisible({ timeout: 1200 }).catch(() => false)) {
+        await searchInput.fill(country.countryName, { timeout: 5000 }).catch(async () => {
+          await page.keyboard.press('Control+A').catch(() => {});
+          await page.keyboard.type(country.countryName, { delay: 35 }).catch(() => {});
+        });
+      } else {
+        await page.keyboard.type(country.countryName, { delay: 35 }).catch(() => {});
+      }
+
+      await core?.sleep?.(600);
+      const clicked = await clickConfiguredPhoneCountryOption(page);
+      if (!clicked) await page.keyboard.press('Enter').catch(() => {});
+
+      await core?.sleep?.(900);
+      await page.keyboard.press('Escape').catch(() => {});
+      await core?.sleep?.(500);
+      const selectedAfter = await getSelectedPhoneCountryText(page);
+      const selected = await isConfiguredPhoneCountrySelected(page);
+      if (selected) {
+        core?.log?.(`✅ Đã chọn country phone ${country.countryName} (${country.dialCode}) trước khi nhập SMS.`);
+        return true;
+      }
+
+      core?.log?.(`❌ OpenAI vẫn chưa đổi sang ${country.countryName}. Hiện tại: ${selectedAfter || 'không đọc được'}. Không nhập số để tránh sai country.`, 'ERROR');
+      return false;
+    };
+
+    const normalizePhoneForConfiguredCountry = (rawPhone = '') => {
+      const country = getConfiguredPhoneCountry();
+      const dialDigits = `${country.dialCode || ''}`.replace(/\D/g, '');
+      let digits = `${rawPhone || ''}`.replace(/\D/g, '');
+      if (dialDigits && digits.startsWith(dialDigits)) digits = digits.slice(dialDigits.length);
+      if (country.country === 9) digits = digits.replace(/^0+/, '');
+      if (country.country === 12) digits = digits.replace(/^0+/, '');
+      if (country.country === 101) digits = digits.replace(/^0+/, '');
+      return digits;
+    };
+
+    const clearPhoneInputOnly = async (page, phoneInput) => {
       await phoneInput.click({ timeout: 5000 }).catch(() => {});
       await phoneInput.fill('', { timeout: 5000 }).catch(async () => {
         await page.keyboard.press('Control+A').catch(() => {});
         await page.keyboard.press('Backspace').catch(() => {});
       });
-      await phoneInput.fill(phoneNumber, { timeout: 8000 });
-      core.log?.(`📲 Đã xoá số cũ và nhập số mới ngay trên trang hiện tại: +${phoneNumber} (Order ${smsItem.orderId || 'unknown'}).`);
+    };
+
+    const fillPhoneInputOnly = async (phoneInput, value = '') => {
+      await phoneInput.click({ timeout: 5000 }).catch(() => {});
+      await phoneInput.fill(value, { timeout: 8000 });
+    };
+
+    const fillPhoneNumberOnCurrentPage = async (core, page, smsItem) => {
+      const phoneNumber = normalizePhoneForConfiguredCountry(smsItem?.phoneNumber || '');
+      if (!page || !phoneNumber) return false;
+      const country = getConfiguredPhoneCountry();
+
+      const oldPhoneInput = await getPhoneInputLocator(page);
+      if (!oldPhoneInput) return false;
+      await clearPhoneInputOnly(page, oldPhoneInput);
+      await core.sleep?.(500);
+
+      const countrySelected = await selectConfiguredPhoneCountry(core, page).catch(() => false);
+      if (!countrySelected) return false;
+      if (!await isConfiguredPhoneCountrySelected(page)) {
+        const selectedText = await getSelectedPhoneCountryText(page);
+        core.log?.(`❌ Sau khi xoá số cũ, country vẫn là ${selectedText || 'không đọc được'} thay vì ${country.countryName} (${country.dialCode}). Không nhập số mới.`, 'ERROR');
+        return false;
+      }
+
+      const freshPhoneInput = await getPhoneInputLocator(page);
+      if (!freshPhoneInput) return false;
+      await fillPhoneInputOnly(freshPhoneInput, phoneNumber);
+      await core.sleep?.(500);
+      if (!await isConfiguredPhoneCountrySelected(page)) {
+        const selectedText = await getSelectedPhoneCountryText(page);
+        core.log?.(`⚠️ Sau khi nhập số mới, country bị reset về ${selectedText || 'không đọc được'}. Xoá lại số, chọn lại ${country.countryName} (${country.dialCode}) rồi nhập lại.`, 'WARNING');
+        const resetPhoneInput = await getPhoneInputLocator(page);
+        if (!resetPhoneInput) return false;
+        await clearPhoneInputOnly(page, resetPhoneInput);
+        await core.sleep?.(500);
+        const reselected = await selectConfiguredPhoneCountry(core, page).catch(() => false);
+        if (!reselected || !await isConfiguredPhoneCountrySelected(page)) {
+          const finalSelectedText = await getSelectedPhoneCountryText(page);
+          core.log?.(`❌ Không chọn lại được ${country.countryName} (${country.dialCode}) sau khi xoá lại số. Hiện tại: ${finalSelectedText || 'không đọc được'}. Không bấm Continue.`, 'ERROR');
+          return false;
+        }
+        const finalPhoneInput = await getPhoneInputLocator(page);
+        if (!finalPhoneInput) return false;
+        await fillPhoneInputOnly(finalPhoneInput, phoneNumber);
+        await core.sleep?.(500);
+        if (!await isConfiguredPhoneCountrySelected(page)) {
+          const finalSelectedText = await getSelectedPhoneCountryText(page);
+          core.log?.(`❌ Country vẫn bị reset về ${finalSelectedText || 'không đọc được'} thay vì ${country.countryName} (${country.dialCode}) sau khi nhập lại lần cuối. Không bấm Continue.`, 'ERROR');
+          return false;
+        }
+      }
+      core.log?.(`📲 Đã xoá số cũ, chọn lại ${country.countryName} (${country.dialCode}) và nhập số mới local ${phoneNumber} (Order ${smsItem.orderId || 'unknown'}).`);
       return true;
     };
 
@@ -2143,13 +2511,49 @@ ipcMain.handle('run:start', async (_event, payload) => {
       return null;
     };
 
+    const originalSelectUsPhoneCountry = ChatGPTAccountCreatorCore.prototype.selectUsPhoneCountry;
+    if (typeof originalSelectUsPhoneCountry === 'function') {
+      ChatGPTAccountCreatorCore.prototype.__originalSelectUsPhoneCountry = originalSelectUsPhoneCountry;
+      ChatGPTAccountCreatorCore.prototype.selectUsPhoneCountry = async function patchedSelectConfiguredPhoneCountry(page, ...args) {
+        const selected = await selectConfiguredPhoneCountry(this, page).catch(() => false);
+        if (selected) return true;
+        return false;
+      };
+    }
+
     const originalGetValidSmsItem = ChatGPTAccountCreatorCore.prototype.getValidSmsItem;
     if (typeof originalGetValidSmsItem === 'function') {
       ChatGPTAccountCreatorCore.prototype.getValidSmsItem = async function patchedSamePageGetValidSmsItem(smsService, excludedOrderIds = [], incorrectOrderIds = [], exhaustedOrderIds = [], ...args) {
-        if (smsService) smsService.__smsRetryCore = this;
+        if (smsService) {
+          smsService.__smsRetryCore = this;
+          smsService.country = SMSPoolService.normalizeCountry(currentSmsPoolCountry?.id ?? currentSmsPoolCountry ?? 12);
+        }
         this.__smsPhoneRetryContext = { smsService, excludedOrderIds, incorrectOrderIds, exhaustedOrderIds };
+        const country = getConfiguredPhoneCountry();
+        if (Array.isArray(this.smsList)) {
+          const beforeCountryFilter = this.smsList.length;
+          this.smsList = this.smsList.filter((item) => {
+            const itemCountry = Number.parseInt(item?.country ?? item?.smsPoolCountry ?? 1, 10) || 1;
+            const itemDial = `${item?.dialCode || item?.cc || ''}`.replace(/^\+?/, '+');
+            if (country.country === 12) return itemCountry === 12 || itemDial === '+63';
+            if (country.country === 9) return itemCountry === 9 || itemDial === '+62';
+            if (country.country === 101) return itemCountry === 101 || itemDial === '+995';
+            if (country.country === 7) return itemCountry === 7 || itemDial === '+7';
+            return itemCountry === country.country || itemDial === country.dialCode;
+          });
+          const removedByCountry = beforeCountryFilter - this.smsList.length;
+          if (removedByCountry > 0) {
+            this.saveSMSState?.();
+            this.log?.(`🧹 Đã bỏ ${removedByCountry} số SMS không thuộc ${country.countryName} (${country.dialCode}) khỏi ứng viên để tránh nhập nhầm country.`);
+          }
+        }
         purgeUsedUpSmsItems(this, 'before_pick_candidate');
         const smsItem = await originalGetValidSmsItem.call(this, smsService, excludedOrderIds, incorrectOrderIds, exhaustedOrderIds, ...args);
+        if (smsItem) {
+          smsItem.country = country.country;
+          smsItem.countryCode = country.countryCode;
+          smsItem.dialCode = country.dialCode;
+        }
         this.__smsCurrentStateItem = smsItem;
         this.__smsCurrentItem = smsItem ? { ...smsItem } : smsItem;
         return this.__smsCurrentItem;
@@ -2162,8 +2566,13 @@ ipcMain.handle('run:start', async (_event, payload) => {
         const holder = this.__smsCurrentItem;
         const stateItem = this.__smsCurrentStateItem;
         if (holder?.orderId && stateItem?.orderId === holder.orderId) {
+          const country = getConfiguredPhoneCountry();
           stateItem.usageCount = Number(holder.usageCount || stateItem.usageCount || 0);
           stateItem.phoneNumber = holder.phoneNumber || stateItem.phoneNumber;
+          stateItem.country = country.country;
+          stateItem.countryName = country.countryName;
+          stateItem.countryCode = country.countryCode;
+          stateItem.dialCode = country.dialCode;
           stateItem.updatedAt = holder.updatedAt || stateItem.updatedAt || new Date().toISOString();
         }
         if (!this.__purgingUsedUpSmsItems) {
@@ -2204,6 +2613,15 @@ ipcMain.handle('run:start', async (_event, payload) => {
           this.__smsLastPhoneSubmitLocator = locator;
           this.__smsLastPhoneSubmitOptions = { ...options };
           this.__smsLastPhonePage = typeof locator?.page === 'function' ? locator.page() : this.__currentCreatePage;
+        }
+        if (isPhoneSubmit) {
+          const page = typeof locator?.page === 'function' ? locator.page() : this.__currentCreatePage;
+          const selected = await selectConfiguredPhoneCountry(this, page).catch(() => false);
+          if (!selected || !await isConfiguredPhoneCountrySelected(page)) {
+            const country = getConfiguredPhoneCountry();
+            this.log?.(`❌ Country phone chưa đúng ${country.countryName} (${country.dialCode}) trước khi bấm Continue. Dừng nhập số này để tránh bị format thành country khác.`, 'ERROR');
+            return false;
+          }
         }
         const result = await originalClickLocatorWithRetry.call(this, locator, options);
         if (result && isPhoneSubmit) {
@@ -2271,12 +2689,17 @@ ipcMain.handle('run:start', async (_event, payload) => {
     const originalVerifyWithRetry = ChatGPTAccountCreatorCore.prototype.verifyWithRetry;
     ChatGPTAccountCreatorCore.prototype.verifyWithRetry = async function patchedVerifyWithRetry(...args) {
       const runtimeProvider = this.normalizeVerifyProvider?.(this.runtimeVerifyProvider || this.config?.verify_provider || '9router') || '9router';
+      const activeVerifyEmail = `${args?.[0] || ''}`.trim();
+      this.__activeVerifyEmail = activeVerifyEmail;
+      ChatGPTAccountCreatorCore.prototype.__activeHotmailOtpEmail = activeVerifyEmail;
       if (runtimeProvider === 'cliproxyapi' && typeof ChatGPTAccountCreatorCore.prototype.__cliProxyApiRefreshBeforeVerify === 'function') {
         await ChatGPTAccountCreatorCore.prototype.__cliProxyApiRefreshBeforeVerify();
       }
-      const email = `${args?.[0] || ''}`.trim();
+      const email = activeVerifyEmail;
       if (isRecentlyRemovedHotmail(email) || (email && /@(hotmail|outlook|live)\./i.test(email) && !getHotmailRepository().findByEmail(email))) {
         removeAccountTxtEmail(email);
+        ChatGPTAccountCreatorCore.prototype.__hotmailOtpExhausted = true;
+        ChatGPTAccountCreatorCore.prototype.__hotmailOtpExhaustedEmail = email;
         this.log?.(`[Hotmail] ${email} không còn trong accounts-hotmail.txt, bỏ qua verify/retry để chuyển account khác.`, 'WARNING');
         return false;
       }
@@ -2287,6 +2710,8 @@ ipcMain.handle('run:start', async (_event, payload) => {
           const exhaustedEmail = `${error.message.split(':')[1] || email}`.trim();
           removeAccountTxtEmail(exhaustedEmail);
           rememberRemovedHotmail(exhaustedEmail, 'verifyWithRetry_hotmail_otp_exhausted');
+          this.__hotmailOtpExhausted = true;
+          this.__hotmailOtpExhaustedEmail = exhaustedEmail;
           this.log?.(`[Hotmail] ${exhaustedEmail} đã hết OTP email và đã bị loại. Dừng retry mail này ngay.`, 'WARNING');
           return false;
         }
@@ -2381,7 +2806,7 @@ ipcMain.handle('run:start', async (_event, payload) => {
   persistWorkspaceConfig(normalizeConfigPatch(configPayload));
   patchPlaywrightLaunchVisibility({ headless });
 
-  const ensureOneKhommoHotmailForSession = async (accountIndex = 1) => {
+  const ensureOneKhommoHotmailForSession = async (accountIndex = 1, attemptLabel = '') => {
     if (!isKhommoHotmailRun) return { ok: true, purchased: false };
     const repo = getHotmailRepository();
     const availableCount = repo.getReadyMailAccounts().length;
@@ -2395,7 +2820,7 @@ ipcMain.handle('run:start', async (_event, payload) => {
         apiKey: clonemupApiKey,
         amount: 1,
         productId: khommoProductId,
-        reason: `RUN ${mode} account ${accountIndex}/${count}`,
+        reason: `RUN ${mode} account ${accountIndex}/${count}${attemptLabel ? ` ${attemptLabel}` : ''}`,
         status: khommoNeededStatus,
       });
       if (purchased.added.length < 1) {
@@ -2466,6 +2891,7 @@ ipcMain.handle('run:start', async (_event, payload) => {
     count: runCount,
     mode: modeOverride,
     smspoolKey,
+    smsPoolCountry: smsPoolCountry.id,
     password,
     routerPassword,
     selectedMailDomain: selectedMailDomain === 'hotmail-khommo' ? 'hotmail' : selectedMailDomain,
@@ -2501,12 +2927,18 @@ ipcMain.handle('run:start', async (_event, payload) => {
     vpnEnabled,
     vpnExtensionPath,
     onLog: (line) => {
-      const normalizedLine = `${line || ''}`.replace(/(tạo account\s*\()(\d+)\/24(\))/gi, (_match, prefix, attempt, suffix) => `${prefix}${Math.min(7, Number.parseInt(attempt, 10) || 1)}/7${suffix}`);
+      const configuredCountry = SMSPoolService.normalizeCountry(currentSmsPoolCountry?.id ?? currentSmsPoolCountry ?? smsPoolCountry.id);
+      const normalizedLine = `${line || ''}`
+        .replace(/(tạo account\s*\()(\d+)\/24(\))/gi, (_match, prefix, attempt, suffix) => `${prefix}${Math.min(5, Number.parseInt(attempt, 10) || 1)}/5${suffix}`)
+        .replace(/Đã điền số\s+(?:US|United States|Philippines|Indonesia|Georgia|Kazakhstan)\s+\+\d+:/gi, `Đã điền số ${configuredCountry.name} ${configuredCountry.dialCode}:`);
+      const hotmailOtpExhausted = removeHotmailOnOtpExhaustedLog(normalizedLine);
       sendToRenderer('log:line', { line: normalizedLine });
+      if (hotmailOtpExhausted) {
+        throw new Error(`HOTMAIL_OTP_EXHAUSTED:${ChatGPTAccountCreatorCore.prototype.__hotmailOtpExhaustedEmail || 'unknown'}`);
+      }
       if (/proxy_runtime_error|407\s+Proxy Authentication Required|proxy server is refusing connections|proxy authentication required/i.test(normalizedLine)) {
         disableRuntimeProxyPool(currentRuntimeProxyPool || preparedProxyPools[0] || null, normalizedLine, (proxyLine) => sendToRenderer('log:line', { line: proxyLine }));
       }
-      removeHotmailOnOtpExhaustedLog(normalizedLine);
     },
     onState: (state) => {
       if (state?.type === 'failure') {
@@ -2518,10 +2950,38 @@ ipcMain.handle('run:start', async (_event, payload) => {
   };
   };
 
+  const runCreatorWithHotmailOtpFlag = async (options = {}) => {
+    try {
+      const summary = await runCreator(options);
+      if (ChatGPTAccountCreatorCore.prototype.__hotmailOtpExhausted === true) {
+        summary.__hotmailOtpExhausted = true;
+        summary.__hotmailOtpExhaustedEmail = ChatGPTAccountCreatorCore.prototype.__hotmailOtpExhaustedEmail || '';
+        ChatGPTAccountCreatorCore.prototype.__hotmailOtpExhausted = false;
+        ChatGPTAccountCreatorCore.prototype.__hotmailOtpExhaustedEmail = '';
+      }
+      return summary;
+    } catch (error) {
+      const message = `${error?.message || error || ''}`;
+      if (message.startsWith('HOTMAIL_OTP_EXHAUSTED:') || ChatGPTAccountCreatorCore.prototype.__hotmailOtpExhausted === true) {
+        const exhaustedEmail = (message.startsWith('HOTMAIL_OTP_EXHAUSTED:') ? message.split(':').slice(1).join(':') : ChatGPTAccountCreatorCore.prototype.__hotmailOtpExhaustedEmail || '').trim();
+        ChatGPTAccountCreatorCore.prototype.__hotmailOtpExhausted = false;
+        ChatGPTAccountCreatorCore.prototype.__hotmailOtpExhaustedEmail = '';
+        return {
+          successful: 0,
+          failed: 1,
+          forced: false,
+          __hotmailOtpExhausted: true,
+          __hotmailOtpExhaustedEmail: exhaustedEmail,
+        };
+      }
+      throw error;
+    }
+  };
+
   activeRun = (async () => {
     if (!shouldRunOneAccountPerSession) {
       currentRuntimeProxyPool = await validateRuntimeProxyBeforeRun(pickProxyPoolsForRun(1)[0] || null, 1);
-      return runCreator(buildRunOptions(count, 1));
+      return runCreatorWithHotmailOtpFlag(buildRunOptions(count, 1));
     }
 
     let totalSuccessful = 0;
@@ -2541,27 +3001,53 @@ ipcMain.handle('run:start', async (_event, payload) => {
 
       currentRuntimeProxyPool = await validateRuntimeProxyBeforeRun(pickProxyPoolsForRun(accountIndex)[0] || null, accountIndex);
       if (isKhommoHotmailRun && mode === 'create_verify') {
-        sendToRenderer('log:line', { line: `[Khommo] Create+Verify account ${accountIndex}/${count}: chạy CREATE trước bằng Hotmail mail_ready; không dùng pending verify/OAuth trước.` });
-        const createSummary = await runCreator(buildRunOptions(1, accountIndex, 'create'));
-        totalSuccessful += Number.parseInt(createSummary?.successful ?? 0, 10) || 0;
-        totalFailed += Number.parseInt(createSummary?.failed ?? 0, 10) || 0;
-        forced = createSummary?.forced === true;
-        latestSummary = createSummary;
-        if (forced) break;
-
-        if (verifyProvider === 'cliproxyapi') {
-          await captureFreshCliProxyApiAuthUrl(`verify account ${accountIndex}/${count}`);
-          sendToRenderer('log:line', { line: `[CLIProxyAPI] Sau khi create xong mới bắt OAuth URL để verify account ${accountIndex}/${count}.` });
+        const maxMailAttempts = 3;
+        let verifyNeedsFreshCreate = false;
+        latestSummary = null;
+        for (let mailAttempt = 1; mailAttempt <= maxMailAttempts; mailAttempt += 1) {
+          if (mailAttempt > 1) {
+            const ready = await ensureOneKhommoHotmailForSession(accountIndex, `mail_attempt_${mailAttempt}`);
+            if (!ready.ok) throw new Error(ready.message || `Không tự mua được Hotmail mới cho account ${accountIndex}/${count} attempt ${mailAttempt}/${maxMailAttempts}.`);
+          }
+          sendToRenderer('log:line', { line: `[Khommo] Create+Verify account ${accountIndex}/${count}: chạy CREATE bằng Hotmail mail_ready (mail attempt ${mailAttempt}/${maxMailAttempts}).` });
+          const createSummary = await runCreatorWithHotmailOtpFlag(buildRunOptions(1, accountIndex, 'create'));
+          forced = createSummary?.forced === true;
+          latestSummary = createSummary;
+          if (forced) break;
+          if (Number.parseInt(createSummary?.successful ?? 0, 10) > 0) {
+            if (verifyProvider === 'cliproxyapi') {
+              await captureFreshCliProxyApiAuthUrl(`verify account ${accountIndex}/${count}`);
+              sendToRenderer('log:line', { line: `[CLIProxyAPI] Sau khi create xong mới bắt OAuth URL để verify account ${accountIndex}/${count}.` });
+            }
+            sendToRenderer('log:line', { line: `[Khommo] Create+Verify account ${accountIndex}/${count}: bắt đầu VERIFY sau khi create hoàn tất.` });
+            latestSummary = await runCreatorWithHotmailOtpFlag(buildRunOptions(1, accountIndex, 'verify'));
+            forced = latestSummary?.forced === true;
+            verifyNeedsFreshCreate = latestSummary?.__hotmailOtpExhausted === true;
+            if (!verifyNeedsFreshCreate) break;
+            sendToRenderer('log:line', { line: `[Hotmail] Verify không nhận OTP/Hotmail chết. Xoá mail đó và quay lại CREATE bằng mail mới (${mailAttempt}/${maxMailAttempts}).` });
+          } else {
+            sendToRenderer('log:line', { line: `[Hotmail] CREATE không nhận OTP/Hotmail chết. Bỏ mail hiện tại và thử mail mới (${mailAttempt}/${maxMailAttempts}).` });
+          }
+          if (mailAttempt >= maxMailAttempts) break;
         }
-        sendToRenderer('log:line', { line: `[Khommo] Create+Verify account ${accountIndex}/${count}: bắt đầu VERIFY sau khi create hoàn tất.` });
-        latestSummary = await runCreator(buildRunOptions(1, accountIndex, 'verify'));
       } else {
-        if (needsVerifyProvider && verifyProvider === 'cliproxyapi') {
-          sendToRenderer('log:line', { line: `[CLIProxyAPI] Verify account ${accountIndex}/${count} bằng OAuth URL mới.` });
-        } else if (isKhommoHotmailRun) {
-          sendToRenderer('log:line', { line: `[Khommo] Chạy phiên account ${accountIndex}/${count} với tối đa 1 Hotmail khả dụng trong phiên này.` });
+        const maxMailAttempts = isKhommoHotmailRun && mode === 'create' ? 3 : 1;
+        latestSummary = null;
+        for (let mailAttempt = 1; mailAttempt <= maxMailAttempts; mailAttempt += 1) {
+          if (mailAttempt > 1) {
+            const ready = await ensureOneKhommoHotmailForSession(accountIndex, `mail_attempt_${mailAttempt}`);
+            if (!ready.ok) throw new Error(ready.message || `Không tự mua được Hotmail mới cho account ${accountIndex}/${count} attempt ${mailAttempt}/${maxMailAttempts}.`);
+          }
+          if (needsVerifyProvider && verifyProvider === 'cliproxyapi') {
+            sendToRenderer('log:line', { line: `[CLIProxyAPI] Verify account ${accountIndex}/${count} bằng OAuth URL mới.` });
+          } else if (isKhommoHotmailRun) {
+            sendToRenderer('log:line', { line: `[Khommo] Chạy phiên account ${accountIndex}/${count} với tối đa 1 Hotmail khả dụng trong phiên này (mail attempt ${mailAttempt}/${maxMailAttempts}).` });
+          }
+          latestSummary = await runCreatorWithHotmailOtpFlag(buildRunOptions(1, accountIndex));
+          forced = latestSummary?.forced === true;
+          if (forced || latestSummary?.__hotmailOtpExhausted !== true || mailAttempt >= maxMailAttempts) break;
+          sendToRenderer('log:line', { line: `[Hotmail] CREATE không nhận OTP/Hotmail chết. Xoá mail đó và thử mail mới (${mailAttempt}/${maxMailAttempts}).` });
         }
-        latestSummary = await runCreator(buildRunOptions(1, accountIndex));
       }
       totalSuccessful += Number.parseInt(latestSummary?.successful ?? 0, 10) || 0;
       totalFailed += Number.parseInt(latestSummary?.failed ?? 0, 10) || 0;

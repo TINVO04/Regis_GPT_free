@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Codex Account Studio</title>
+  <title>REG CODEX TINVO</title>
   <meta name="description"
     content="Desktop UI quản lý create/verify account với login license, log realtime, bảng dữ liệu, và lịch sử chạy." />
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -21,7 +21,7 @@
     <section class="dashboard-shell" id="dashboard-shell">
       <header class="header-status-bar" id="topbar-main">
         <div class="brand-block">
-          <h1 id="main-title">Codex Account Studio</h1>
+          <h1 id="main-title">REG CODEX TINVO</h1>
           <p id="main-subtitle">Desktop Control Panel • Create / Verify / Create+Verify</p>
         </div>
 
@@ -240,6 +240,14 @@
               <label class="field field-wide" for="sms-key-input">
                 <span>SMSPool API Key</span>
                 <input id="sms-key-input" type="password" placeholder="Nhập API key" autocomplete="off" />
+              </label>
+
+              <label class="field field-wide" for="sms-country-select">
+                <span>Quốc gia SMSPool</span>
+                <select id="sms-country-select">
+                  <option value="1" selected>United States (+1) • ID 1 • $0.07</option>
+                  <option value="9">Indonesia (+62) • ID 9 • $0.07-$0.08</option>
+                </select>
               </label>
 
               <div class="sms-balance-card field-wide" id="sms-balance-card" aria-live="polite">
@@ -473,6 +481,7 @@
                       <th>#</th>
                       <th>Order ID</th>
                       <th>Phone</th>
+                      <th>Country</th>
                       <th>Used</th>
                       <th>Updated</th>
                       <th>Action</th>

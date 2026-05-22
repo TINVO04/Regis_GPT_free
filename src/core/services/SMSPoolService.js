@@ -1,20 +1,50 @@
 export class SMSPoolService {
-  constructor(apiKey) {
+  static COUNTRIES = {
+    1: { id: 1, name: 'United States', dialCode: '+1', code: 'US', maxPrice: '0.07' },
+    12: { id: 12, name: 'Philippines', dialCode: '+63', code: 'PH', maxPrice: '0.07' },
+    9: { id: 9, name: 'Indonesia', dialCode: '+62', code: 'ID', maxPrice: '0.08' },
+    101: { id: 101, name: 'Georgia', dialCode: '+995', code: 'GE', maxPrice: '0.08' },
+    7: { id: 7, name: 'Kazakhstan', dialCode: '+7', code: 'KZ', maxPrice: '0.09' },
+  };
+
+  static defaultCountry = 12;
+
+  static onStatus = null;
+
+  static normalizeCountry(country = 12) {
+    const id = Number.parseInt(country, 10) || 12;
+    return SMSPoolService.COUNTRIES[id] || SMSPoolService.COUNTRIES[12];
+  }
+
+  constructor(apiKey, options = {}) {
     this.apiKey = apiKey;
+    this.country = SMSPoolService.normalizeCountry(options.country ?? SMSPoolService.defaultCountry);
   }
 
   isStopped(shouldStop) {
     return typeof shouldStop === 'function' && shouldStop();
   }
 
-  async sleep(ms, shouldStop = () => false) {
-    const stepMs = 250;
+  logStatus(message = '') {
+    const line = `${message || ''}`.trim();
+    if (!line) return;
+    console.log(line);
+    if (typeof SMSPoolService.onStatus === 'function') {
+      SMSPoolService.onStatus(line);
+    }
+  }
+
+  async sleep(ms, shouldStop = () => false, onTick = null) {
+    const stepMs = 1000;
     let elapsedMs = 0;
     while (elapsedMs < ms) {
       if (this.isStopped(shouldStop)) return false;
       const waitMs = Math.min(stepMs, ms - elapsedMs);
       await new Promise((resolve) => setTimeout(resolve, waitMs));
       elapsedMs += waitMs;
+      if (typeof onTick === 'function' && (elapsedMs === ms || elapsedMs % 5000 === 0)) {
+        onTick(Math.max(0, ms - elapsedMs));
+      }
     }
     return true;
   }
@@ -73,16 +103,18 @@ export class SMSPoolService {
   }
 
   async buyNumber(shouldStop = () => false) {
-    const url = `https://api.smspool.net/purchase/sms?key=${this.apiKey}&service=671&country=1&max_price=0.07`;
-    const maxAttempts = 5;
-    const retryDelayMs = 60000;
+    const country = SMSPoolService.normalizeCountry(this.country?.id ?? this.country);
+    const url = `https://api.smspool.net/purchase/sms?key=${this.apiKey}&service=671&country=${country.id}&max_price=${country.maxPrice}`;
+    const maxAttempts = 4;
+    const retryDelayMs = country.id === 1 ? 15000 : 30000;
     let lastMessage = '';
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       try {
+        this.logStatus(`[SMSPool] Đang thuê số ${country.name} ${country.dialCode} (ID ${country.id}) cho OpenAI/ChatGPT, lần ${attempt}/${maxAttempts}...`);
         const res = await this.fetchJson(url, { timeoutMs: 15000, shouldStop });
         if (res.success) {
-          console.log(`[SMSPool] Đã thuê số mới: +${res.cc}${res.phonenumber} (ID: ${res.orderid})`);
+          this.logStatus(`[SMSPool] Đã thuê số mới ${country.name} ${country.dialCode}: +${res.cc}${res.phonenumber} (ID: ${res.orderid})`);
           return res;
         }
 
@@ -91,8 +123,10 @@ export class SMSPoolService {
           throw new Error(lastMessage);
         }
 
-        console.log(`[SMSPool] Pool đang bận (${lastMessage}). Chờ ${Math.round(retryDelayMs / 1000)}s rồi thử thuê lại (${attempt}/${maxAttempts})...`);
-        const shouldContinue = await this.sleep(retryDelayMs, shouldStop);
+        this.logStatus(`[SMSPool] Pool ${country.name} đang bận (${lastMessage}). Chờ ${Math.round(retryDelayMs / 1000)}s rồi thử thuê lại (${attempt}/${maxAttempts})...`);
+        const shouldContinue = await this.sleep(retryDelayMs, shouldStop, (remainingMs) => {
+          if (remainingMs > 0) this.logStatus(`[SMSPool] Vẫn đang chờ pool ${country.name}; còn khoảng ${Math.round(remainingMs / 1000)}s...`);
+        });
         if (!shouldContinue) throw new Error('SMSPool request stopped');
       } catch (error) {
         lastMessage = this.stripHtml(error.message || lastMessage || 'SMSPool purchase failed');
@@ -100,8 +134,10 @@ export class SMSPoolService {
           throw new Error(`SMSPool API Error: ${lastMessage}`);
         }
 
-        console.log(`[SMSPool] Thuê số lỗi tạm thời (${lastMessage}). Chờ ${Math.round(retryDelayMs / 1000)}s rồi thử lại (${attempt}/${maxAttempts})...`);
-        const shouldContinue = await this.sleep(retryDelayMs, shouldStop);
+        this.logStatus(`[SMSPool] Thuê số ${country.name} lỗi tạm thời (${lastMessage}). Chờ ${Math.round(retryDelayMs / 1000)}s rồi thử lại (${attempt}/${maxAttempts})...`);
+        const shouldContinue = await this.sleep(retryDelayMs, shouldStop, (remainingMs) => {
+          if (remainingMs > 0) this.logStatus(`[SMSPool] Vẫn đang chờ pool ${country.name}; còn khoảng ${Math.round(remainingMs / 1000)}s...`);
+        });
         if (!shouldContinue) throw new Error('SMSPool API Error: SMSPool request stopped');
       }
     }

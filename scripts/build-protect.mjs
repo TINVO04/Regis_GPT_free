@@ -134,11 +134,32 @@ function patchPackageJson() {
   const pkgPath = path.join(outDir, 'package.json');
   const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
   pkg.main = 'electron_main.js';
+  pkg.name = 'reg-codex-tinvo';
+  pkg.description = 'REG CODEX TINVO desktop automation studio';
+  pkg.homepage = 'https://github.com/TINVO04/Regis_GPT_free';
   pkg.build = pkg.build || {};
+  pkg.build.appId = 'com.tinvo.regcodex';
+  pkg.build.productName = 'REG CODEX TINVO';
   pkg.build.directories = pkg.build.directories || {};
   pkg.build.directories.output = protectedBuildOutputDir;
+  pkg.build.win = pkg.build.win || { target: ['nsis'] };
+  pkg.build.win.artifactName = 'REG-CODEX-TINVO-${version}-${arch}.${ext}';
+  pkg.build.nsis = pkg.build.nsis || {};
+  pkg.build.nsis.oneClick = false;
+  pkg.build.nsis.allowToChangeInstallationDirectory = true;
+  pkg.build.nsis.perMachine = false;
+  pkg.build.publish = [
+    {
+      provider: 'github',
+      owner: 'TINVO04',
+      repo: 'Regis_GPT_free',
+      releaseType: 'release',
+    },
+  ];
   pkg.scripts = {
     'desktop:dev': 'electron .',
+    'dist': 'node scripts/electron-builder-runner.mjs --win --publish never',
+    'publish:github': 'node scripts/electron-builder-runner.mjs --win --publish always',
     'install-browsers': 'node scripts/install-playwright-firefox.mjs',
     'postinstall': 'node scripts/install-playwright-firefox.mjs',
   };
