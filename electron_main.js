@@ -1704,7 +1704,7 @@ async function startRunInternal(payload = {}, { verifyAgain = false } = {}) {
   const markOpenAiAccountDeactivated = (core, email = '', reason = 'openai_account_deactivated') => {
     const targetEmail = `${email || core?.__activeVerifyEmail || ChatGPTAccountCreatorCore.prototype.__activeHotmailOtpEmail || ''}`.trim();
     if (targetEmail) {
-      getHotmailRepository().updateAccountStatus(targetEmail, 'error');
+      getHotmailRepository().deleteAccount(targetEmail);
       removeAccountTxtEmail(targetEmail);
       rememberRemovedHotmail(targetEmail, reason);
     }
@@ -1712,7 +1712,7 @@ async function startRunInternal(payload = {}, { verifyAgain = false } = {}) {
     ChatGPTAccountCreatorCore.prototype.__openAiAccountDeactivatedEmail = targetEmail;
     core.__openAiAccountDeactivated = true;
     core.__openAiAccountDeactivatedEmail = targetEmail;
-    core.log?.(`[OpenAI] ${targetEmail || 'Account hiện tại'} bị deleted/deactivated (account_deactivated). Bỏ qua mail này, không chờ SMS/không thuê số nữa.`, 'WARNING');
+    core.log?.(`[OpenAI] ${targetEmail || 'Account hiện tại'} bị deleted/deactivated (account_deactivated). Đã xoá khỏi accounts-hotmail.txt, bỏ qua mail này, không chờ SMS/không thuê số nữa.`, 'WARNING');
     sendToRenderer('data:changed', readWorkspaceData());
     return targetEmail;
   };
@@ -3109,18 +3109,11 @@ async function startRunInternal(payload = {}, { verifyAgain = false } = {}) {
         const deactivatedEmail = (message.startsWith('OPENAI_ACCOUNT_DEACTIVATED:') ? message.split(':').slice(1).join(':') : ChatGPTAccountCreatorCore.prototype.__openAiAccountDeactivatedEmail || '').trim();
         ChatGPTAccountCreatorCore.prototype.__openAiAccountDeactivated = false;
         ChatGPTAccountCreatorCore.prototype.__openAiAccountDeactivatedEmail = '';
+        sendToRenderer('log:line', { line: `[OpenAI] ${deactivatedEmail || 'Account'} bị deleted/deactivated, đã bỏ qua không hiện popup lỗi.` });
         return {
           successful: 0,
           failed: 1,
           forced: false,
-          latestFailure: {
-            type: 'failure',
-            scope: 'verify',
-            reason: 'openai_account_deactivated',
-            message: `${deactivatedEmail || 'Account'} bị OpenAI deleted/deactivated, đã bỏ qua không chờ SMS.`,
-            email: deactivatedEmail,
-            timestamp: new Date().toISOString(),
-          },
           __openAiAccountDeactivated: true,
           __openAiAccountDeactivatedEmail: deactivatedEmail,
         };
@@ -3239,7 +3232,7 @@ async function startRunInternal(payload = {}, { verifyAgain = false } = {}) {
       stopCliProxyApiCapture(cliProxyApiCaptureProcess);
       const finishedAt = new Date();
       const durationSec = Math.round((finishedAt.getTime() - startedAt.getTime()) / 1000);
-      const failure = summary?.latestFailure || latestRunFailure;
+      const failure = summary?.__openAiAccountDeactivated === true ? null : (summary?.latestFailure || latestRunFailure);
       const runStatus = summary?.forced ? 'force-stopped' : 'done';
       const historyEntry = {
         id: `${startedAt.getTime()}`,
