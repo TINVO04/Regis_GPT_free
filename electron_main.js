@@ -1691,6 +1691,86 @@ async function startRunInternal(payload = {}, { verifyAgain = false } = {}) {
     return { ok: false, message: 'Mode có verify hoặc Mode 4 Stage 4 cần SMSPool API key để xác minh phone/9Router.' };
   }
 
+  const detectOpenAiAccountDeactivated = async (page) => {
+    if (!page || page.isClosed?.()) return false;
+    const text = await page.locator('body').innerText({ timeout: 1200 }).catch(() => '');
+    const normalizedText = `${text || ''}`.replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
+    return /Authentication\s+Error/i.test(normalizedText)
+      && (/account_deactivated/i.test(normalizedText)
+        || /account\s+(?:has\s+been\s+)?(?:deleted|deactivated)/i.test(normalizedText)
+        || /you\s+do\s+not\s+have\s+an\s+account\s+because\s+it\s+has\s+been\s+(?:deleted|deactivated)/i.test(normalizedText));
+  };
+
+  const markOpenAiAccountDeactivated = (core, email = '', reason = 'openai_account_deactivated') => {
+    const targetEmail = `${email || core?.__activeVerifyEmail || ChatGPTAccountCreatorCore.prototype.__activeHotmailOtpEmail || ''}`.trim();
+    if (targetEmail) {
+      getHotmailRepository().updateAccountStatus(targetEmail, 'error');
+      removeAccountTxtEmail(targetEmail);
+      rememberRemovedHotmail(targetEmail, reason);
+    }
+    ChatGPTAccountCreatorCore.prototype.__openAiAccountDeactivated = true;
+    ChatGPTAccountCreatorCore.prototype.__openAiAccountDeactivatedEmail = targetEmail;
+    core.__openAiAccountDeactivated = true;
+    core.__openAiAccountDeactivatedEmail = targetEmail;
+    core.log?.(`[OpenAI] ${targetEmail || 'Account hiện tại'} bị deleted/deactivated (account_deactivated). Bỏ qua mail này, không chờ SMS/không thuê số nữa.`, 'WARNING');
+    sendToRenderer('data:changed', readWorkspaceData());
+    return targetEmail;
+  };
+
+  const patchOpenAiAccountDeactivatedDetection = () => {
+    if (ChatGPTAccountCreatorCore.prototype.__openAiAccountDeactivatedPatched) return;
+
+    const resolveCandidatePages = (core) => [
+      core?.__currentCreatePage,
+      ChatGPTAccountCreatorCore.prototype.__currentCreatePage,
+      ChatGPTAccountCreatorCore.prototype.__activeHotmailOtpPage,
+      ...(ChatGPTAccountCreatorCore.prototype.__trackedHotmailOtpPages || []),
+    ].filter(Boolean);
+
+    const checkPages = async (core) => {
+      for (const page of resolveCandidatePages(core)) {
+        if (await detectOpenAiAccountDeactivated(page)) {
+          const email = markOpenAiAccountDeactivated(core, core?.__activeVerifyEmail || ChatGPTAccountCreatorCore.prototype.__activeHotmailOtpEmail, 'detected_account_deactivated_page');
+          throw new Error(`OPENAI_ACCOUNT_DEACTIVATED:${email || 'unknown'}`);
+        }
+      }
+    };
+
+    const originalSleep = ChatGPTAccountCreatorCore.prototype.sleep;
+    if (typeof originalSleep === 'function') {
+      ChatGPTAccountCreatorCore.prototype.sleep = async function patchedOpenAiAccountDeactivatedSleep(...args) {
+        const result = await originalSleep.call(this, ...args);
+        await checkPages(this);
+        return result;
+      };
+    }
+
+    const originalClickLocatorWithRetry = ChatGPTAccountCreatorCore.prototype.clickLocatorWithRetry;
+    if (typeof originalClickLocatorWithRetry === 'function') {
+      ChatGPTAccountCreatorCore.prototype.clickLocatorWithRetry = async function patchedOpenAiAccountDeactivatedClick(locator, options = {}) {
+        await checkPages(this);
+        const result = await originalClickLocatorWithRetry.call(this, locator, options);
+        await this.sleep?.(800).catch(() => {});
+        await checkPages(this);
+        return result;
+      };
+    }
+
+    const originalWaitBeforeWorkflowRetry = ChatGPTAccountCreatorCore.prototype.waitBeforeWorkflowRetry;
+    if (typeof originalWaitBeforeWorkflowRetry === 'function') {
+      ChatGPTAccountCreatorCore.prototype.waitBeforeWorkflowRetry = async function patchedOpenAiAccountDeactivatedWaitBeforeRetry(...args) {
+        if (this.__openAiAccountDeactivated === true || ChatGPTAccountCreatorCore.prototype.__openAiAccountDeactivated === true) {
+          const email = this.__openAiAccountDeactivatedEmail || ChatGPTAccountCreatorCore.prototype.__openAiAccountDeactivatedEmail || 'unknown';
+          throw new Error(`OPENAI_ACCOUNT_DEACTIVATED:${email}`);
+        }
+        await checkPages(this);
+        return originalWaitBeforeWorkflowRetry.call(this, ...args);
+      };
+    }
+
+    ChatGPTAccountCreatorCore.prototype.__openAiAccountDeactivatedPatched = true;
+  };
+
   const patchHotmailOtpHandling = () => {
     if (ChatGPTAccountCreatorCore.prototype.__hotmailOtpHandlingPatched) return;
 
@@ -2734,6 +2814,11 @@ async function startRunInternal(payload = {}, { verifyAgain = false } = {}) {
       try {
         return await originalVerifyWithRetry.apply(this, args);
       } catch (error) {
+        if (`${error?.message || ''}`.startsWith('OPENAI_ACCOUNT_DEACTIVATED:')) {
+          const deactivatedEmail = `${error.message.split(':').slice(1).join(':') || email}`.trim();
+          markOpenAiAccountDeactivated(this, deactivatedEmail, 'verifyWithRetry_account_deactivated');
+          return false;
+        }
         if (`${error?.message || ''}`.startsWith('HOTMAIL_OTP_EXHAUSTED:')) {
           const exhaustedEmail = `${error.message.split(':')[1] || email}`.trim();
           removeAccountTxtEmail(exhaustedEmail);
@@ -2785,6 +2870,7 @@ async function startRunInternal(payload = {}, { verifyAgain = false } = {}) {
     return cliProxyApiAuthUrl;
   };
 
+  patchOpenAiAccountDeactivatedDetection();
   patchHotmailOtpHandling();
   patchCreateAccountOtpRetries();
   patchHotmailStatusRefresh();
@@ -3019,6 +3105,26 @@ async function startRunInternal(payload = {}, { verifyAgain = false } = {}) {
       return summary;
     } catch (error) {
       const message = `${error?.message || error || ''}`;
+      if (message.startsWith('OPENAI_ACCOUNT_DEACTIVATED:') || ChatGPTAccountCreatorCore.prototype.__openAiAccountDeactivated === true) {
+        const deactivatedEmail = (message.startsWith('OPENAI_ACCOUNT_DEACTIVATED:') ? message.split(':').slice(1).join(':') : ChatGPTAccountCreatorCore.prototype.__openAiAccountDeactivatedEmail || '').trim();
+        ChatGPTAccountCreatorCore.prototype.__openAiAccountDeactivated = false;
+        ChatGPTAccountCreatorCore.prototype.__openAiAccountDeactivatedEmail = '';
+        return {
+          successful: 0,
+          failed: 1,
+          forced: false,
+          latestFailure: {
+            type: 'failure',
+            scope: 'verify',
+            reason: 'openai_account_deactivated',
+            message: `${deactivatedEmail || 'Account'} bị OpenAI deleted/deactivated, đã bỏ qua không chờ SMS.`,
+            email: deactivatedEmail,
+            timestamp: new Date().toISOString(),
+          },
+          __openAiAccountDeactivated: true,
+          __openAiAccountDeactivatedEmail: deactivatedEmail,
+        };
+      }
       if (message.startsWith('HOTMAIL_OTP_EXHAUSTED:') || ChatGPTAccountCreatorCore.prototype.__hotmailOtpExhausted === true) {
         const exhaustedEmail = (message.startsWith('HOTMAIL_OTP_EXHAUSTED:') ? message.split(':').slice(1).join(':') : ChatGPTAccountCreatorCore.prototype.__hotmailOtpExhaustedEmail || '').trim();
         ChatGPTAccountCreatorCore.prototype.__hotmailOtpExhausted = false;
@@ -3102,6 +3208,10 @@ async function startRunInternal(payload = {}, { verifyAgain = false } = {}) {
           }
           latestSummary = await runCreatorWithHotmailOtpFlag(buildRunOptions(1, accountIndex));
           forced = latestSummary?.forced === true;
+          if (latestSummary?.__openAiAccountDeactivated === true) {
+            sendToRenderer('log:line', { line: `[OpenAI] Account ${latestSummary.__openAiAccountDeactivatedEmail || ''} bị deleted/deactivated, đã bỏ qua và chuyển account tiếp theo.` });
+            break;
+          }
           if (forced || latestSummary?.__hotmailOtpExhausted !== true || mailAttempt >= maxMailAttempts) break;
           sendToRenderer('log:line', { line: `[Hotmail] CREATE không nhận OTP/Hotmail chết. Xoá mail đó và thử mail mới (${mailAttempt}/${maxMailAttempts}).` });
         }
