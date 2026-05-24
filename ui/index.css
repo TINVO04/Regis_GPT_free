@@ -419,7 +419,7 @@ body::before {
 
 .actions-block .action-bar {
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  grid-template-areas: "run run stop" "force save refresh";
+  grid-template-areas: "run verify-again stop" "force save refresh";
 }
 
 .actions-block .btn {

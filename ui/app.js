@@ -48,6 +48,8 @@ const el = {
   shopgmail9999OpenBtn: document.getElementById('shopgmail9999-open-button'),
   hotmailBuyAmount: document.getElementById('hotmail-buy-amount-input'),
   hotmailBuyBtn: document.getElementById('hotmail-buy-button'),
+  verifyAgainTextarea: document.getElementById('verify-again-textarea'),
+  verifyAgainBtn: document.getElementById('verify-again-button'),
   hotmailImportTextarea: document.getElementById('hotmail-import-textarea'),
   hotmailImportStatus: document.getElementById('hotmail-import-status-select'),
   hotmailImportBtn: document.getElementById('hotmail-import-button'),
@@ -247,6 +249,8 @@ function initRuntimeInputs() {
     el.shopgmail9999OpenBtn,
     el.hotmailBuyAmount,
     el.hotmailBuyBtn,
+    el.verifyAgainTextarea,
+    el.verifyAgainBtn,
     el.hotmailImportTextarea,
     el.hotmailImportBtn,
     el.password,
@@ -1686,6 +1690,64 @@ async function handleRun() {
   }
 }
 
+async function handleVerifyAgain() {
+  const latestPreflight = await refreshPreflight(false);
+  if (latestPreflight?.status === 'fatal') {
+    pushLog(`[Preflight] Blocked: ${latestPreflight.summary}`);
+    return;
+  }
+
+  if (!authState.authenticated) {
+    pushLog('[UI] Bạn chưa đăng nhập');
+    return;
+  }
+
+  const configPayload = getConfigPayload();
+  if (!configPayload.smspoolKey) {
+    pushLog('[Verify lại] Cần SMSPool key để verify lại các mail chưa xác minh số điện thoại.');
+    return;
+  }
+
+  if (configPayload.verifyProvider === 'cliproxyapi') {
+    pushLog('[CLIProxyAPI] Verify lại sẽ tự chạy -codex-login và tự lấy OAuth URL mới cho từng account.');
+  }
+
+  const rawText = el.verifyAgainTextarea?.value.trim() || '';
+  const emails = rawText
+    .split(/[\r\n,;\s]+/)
+    .map((item) => item.trim().toLowerCase())
+    .filter((item) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(item));
+
+  const uniqueEmails = [...new Set(emails)];
+  if (uniqueEmails.length < 1) {
+    pushLog('[Verify lại] Chưa có mail hợp lệ trong ô danh sách.');
+    return;
+  }
+
+  const smsCountryLabels = {
+    1: 'United States (+1)',
+    9: 'Indonesia (+62)',
+  };
+  const runPayload = {
+    ...configPayload,
+    mode: 'verify',
+    selectedMailDomain: 'hotmail',
+    randomMailDomain: false,
+    verifyAgainEmails: uniqueEmails,
+    count: uniqueEmails.length,
+  };
+
+  setRunningState(true, 'Running: verify lại');
+  pushLog(`[Verify lại] Nhận ${uniqueEmails.length} mail từ danh sách. App sẽ lọc accounts-hotmail.txt, chuyển mail tồn tại sang pending rồi verify lại.`);
+  pushLog(`[UI] Start run mode=verify_again, count=${uniqueEmails.length}, smsCountry=${smsCountryLabels[runPayload.smsPoolCountry] || `ID ${runPayload.smsPoolCountry}`}, verifyProvider=${runPayload.verifyProvider === 'cliproxyapi' ? 'CLIProxyAPI' : '9Router'}`);
+  const result = await window.desktopAPI.startVerifyAgain(runPayload);
+  if (!result.ok) {
+    if (result.preflight) renderPreflight(result.preflight);
+    setRunningState(false, 'Error', true);
+    pushLog(`[Verify lại] Start failed: ${result.message}`);
+  }
+}
+
 async function handleAddProxy(event) {
   event.preventDefault();
   const useKunProxyApi = el.proxyKunProxyApiInput?.checked === true;
@@ -2004,6 +2066,7 @@ async function handleOpenWorkspaceData() {
 
 function bindEvents() {
   el.runBtn.addEventListener('click', handleRun);
+  el.verifyAgainBtn?.addEventListener('click', handleVerifyAgain);
   el.stopBtn.addEventListener('click', handleStop);
   el.forceStopBtn.addEventListener('click', handleForceStop);
   el.saveConfigBtn.addEventListener('click', handleSaveConfig);

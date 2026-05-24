@@ -173,6 +173,12 @@
                 <span>Giữ nguyên flow cũ: mở 9Router, login, vào Providers → Codex, tool tự bấm Add.</span>
               </div>
 
+              <label class="field field-wide" for="verify-again-textarea">
+                <span>Verify lại theo danh sách mail</span>
+                <textarea id="verify-again-textarea" rows="6" placeholder="Mỗi dòng 1 mail cần verify lại&#10;example@hotmail.com&#10;example2@outlook.com"></textarea>
+                <small>Dán mail cần verify lại. App chỉ xử lý mail có tồn tại trong accounts-hotmail.txt.</small>
+              </label>
+
               <div class="cliproxyapi-panel field-wide cliproxyapi-only hidden">
                 <label class="field" for="cliproxyapi-executable-input">
                   <span>CLIProxyAPI executable</span>
@@ -639,6 +645,7 @@
         </div>
         <div class="action-bar" id="actions-row">
           <button id="run-button" class="btn btn-primary" type="button">▶ Run</button>
+          <button id="verify-again-button" class="btn btn-secondary" type="button">↻ Verify lại</button>
           <button id="stop-button" class="btn btn-danger" type="button" disabled>■ Stop</button>
           <button id="force-stop-button" class="btn btn-danger btn-force" type="button" disabled>⛔ Force Stop</button>
           <button id="save-config-button" class="btn btn-secondary" type="button">💾 Lưu</button>

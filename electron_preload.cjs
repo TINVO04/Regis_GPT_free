@@ -2,6 +2,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('desktopAPI', {
   startRun: (payload) => ipcRenderer.invoke('run:start', payload),
+  startVerifyAgain: (payload) => ipcRenderer.invoke('run:verify-again', payload),
   stopRun: () => ipcRenderer.invoke('run:stop'),
   forceStopRun: () => ipcRenderer.invoke('run:force-stop'),
   refreshData: () => ipcRenderer.invoke('data:refresh'),

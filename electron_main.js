@@ -1636,13 +1636,16 @@ ipcMain.handle('khommo:buy-hotmail', async (_event, payload) => {
   }
 });
 
-ipcMain.handle('run:start', async (_event, payload) => {
+async function startRunInternal(payload = {}, { verifyAgain = false } = {}) {
   if (isRunning) {
     return { ok: false, message: 'Đang có tiến trình chạy. Hãy stop trước.' };
   }
 
-  const count = Number.parseInt(payload?.count, 10);
-  const mode = payload?.mode || 'create_verify';
+  const verifyAgainEmails = [...new Set([].concat(payload?.verifyAgainEmails || [])
+    .map((item) => `${item || ''}`.trim().toLowerCase())
+    .filter((item) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(item)))];
+  let count = verifyAgain ? verifyAgainEmails.length : Number.parseInt(payload?.count, 10);
+  const mode = verifyAgain ? 'verify' : payload?.mode || 'create_verify';
   const savedConfig = readJsonFile(workspaceState.configFile, {});
   const smspoolKey = (payload?.smspoolKey || '').trim();
   const requestedSmsPoolCountry = payload?.smsPoolCountry ?? savedConfig.smspool_country ?? 12;
@@ -1671,7 +1674,7 @@ ipcMain.handle('run:start', async (_event, payload) => {
   const cplTestCardCvc = `${payload?.cplTestCardCvc || process.env.CPL_TEST_CARD_CVC || savedConfig.cpl_test_card_cvc || ''}`.trim();
   const verifyProvider = normalizeVerifyProvider(payload?.verifyProvider || savedConfig.verify_provider || '9router');
   const cliProxyApiCommand = buildCliProxyApiCommand(payload, savedConfig);
-  const isKhommoHotmailRun = (mode === 'create' || mode === 'create_verify') && selectedMailDomain === 'hotmail-khommo';
+  const isKhommoHotmailRun = !verifyAgain && (mode === 'create' || mode === 'create_verify') && selectedMailDomain === 'hotmail-khommo';
   const khommoNeededStatus = 'mail_ready';
   const khommoProductId = Math.max(1, Number.parseInt(payload?.khommoHotmailProductId ?? savedConfig.khommo_hotmail_product_id ?? 7511, 10) || 7511);
   let cliProxyApiAuthUrl = '';
@@ -1681,7 +1684,7 @@ ipcMain.handle('run:start', async (_event, payload) => {
   const shouldRunOneAccountPerSession = isKhommoHotmailRun || (needsVerifyProvider && verifyProvider === 'cliproxyapi');
 
   if (Number.isNaN(count) || count <= 0) {
-    return { ok: false, message: 'Số lượng phải lớn hơn 0.' };
+    return { ok: false, message: verifyAgain ? 'Danh sách verify lại chưa có mail hợp lệ.' : 'Số lượng phải lớn hơn 0.' };
   }
 
   if ((mode === 'verify' || mode === 'create_verify' || (isCreatePayUnlinkMode && createPayUnlinkStage === 'stage4')) && !smspoolKey) {
@@ -2019,6 +2022,22 @@ ipcMain.handle('run:start', async (_event, payload) => {
         core.log?.(`✅ Đã nhập OTP mail + tên/tuổi và bấm Tạo/Continue${reason ? ` (${reason})` : ''}. Không chờ kiểm tra thêm, chuyển account sang pending.`);
       };
 
+      const dismissNoAuthNuxModal = async (page, core) => {
+        if (!page || page.isClosed?.()) return false;
+        const removed = await page.evaluate(() => {
+          const modal = document.querySelector('#modal-no-auth-imagegen-nux, [data-testid="modal-no-auth-imagegen-nux"]');
+          if (!modal) return false;
+          const root = modal.closest('[data-state="open"], [role="dialog"], .fixed.inset-0') || modal;
+          root.remove();
+          document.body.style.pointerEvents = '';
+          document.body.style.overflow = '';
+          document.documentElement.style.overflow = '';
+          return true;
+        }).catch(() => false);
+        if (removed) core?.log?.('🧹 Đã đóng popup no-auth-imagegen-nux đang chặn nút Sign up.');
+        return removed;
+      };
+
       ChatGPTAccountCreatorCore.prototype.clickLocatorWithRetry = async function patchedClickLocatorWithRetry(locator, options = {}) {
         const label = `${options?.label || ''}`;
         if (/sign\s*up|submit\s+sau\s+email|continue\s+sau\s+email/i.test(label)) {
@@ -2026,6 +2045,11 @@ ipcMain.handle('run:start', async (_event, payload) => {
           this.__mailOtpSubmittedAt = 0;
           this.__createCompletedAfterMailOtpProfileSubmit = false;
           this.__createCompletedAfterMailOtpProfileSubmitAt = 0;
+        }
+
+        if (/sign\s*up/i.test(label)) {
+          const page = typeof locator?.page === 'function' ? locator.page() : this.__currentCreatePage;
+          await dismissNoAuthNuxModal(page, this);
         }
 
         const delayed = this.__currentCreatePage ? delayedProfiles.get(this.__currentCreatePage) : null;
@@ -2696,6 +2720,10 @@ ipcMain.handle('run:start', async (_event, payload) => {
         await ChatGPTAccountCreatorCore.prototype.__cliProxyApiRefreshBeforeVerify();
       }
       const email = activeVerifyEmail;
+      if (email && verifyAgain && getHotmailRepository().findByEmail(email)?.status?.toLowerCase?.() === 'verify') {
+        this.log?.(`[Verify lại] ${email} đã verify sẵn, bỏ qua không cần thêm SMS.`, 'WARNING');
+        return true;
+      }
       if (isRecentlyRemovedHotmail(email) || (email && /@(hotmail|outlook|live)\./i.test(email) && !getHotmailRepository().findByEmail(email))) {
         removeAccountTxtEmail(email);
         ChatGPTAccountCreatorCore.prototype.__hotmailOtpExhausted = true;
@@ -2805,6 +2833,35 @@ ipcMain.handle('run:start', async (_event, payload) => {
   }
   persistWorkspaceConfig(normalizeConfigPatch(configPayload));
   patchPlaywrightLaunchVisibility({ headless });
+
+  if (verifyAgain) {
+    const repo = getHotmailRepository();
+    const rows = repo.list();
+    const byEmail = new Map(rows.map((row) => [row.email.toLowerCase(), row]));
+    const matched = [];
+    const skippedMissing = [];
+    const alreadyVerified = [];
+    for (const email of verifyAgainEmails) {
+      const row = byEmail.get(email);
+      if (!row) {
+        skippedMissing.push(email);
+        continue;
+      }
+      if (`${row.status || ''}`.trim().toLowerCase() === 'verify') alreadyVerified.push(row.email);
+      repo.updateAccountStatus(row.email, 'pending');
+      matched.push(row.email);
+    }
+    if (skippedMissing.length > 0) sendToRenderer('log:line', { line: `[Verify lại] Bỏ qua ${skippedMissing.length} mail không tồn tại trong accounts-hotmail.txt: ${skippedMissing.slice(0, 8).join(', ')}${skippedMissing.length > 8 ? '...' : ''}` });
+    if (alreadyVerified.length > 0) sendToRenderer('log:line', { line: `[Verify lại] ${alreadyVerified.length} mail đang status=verify cũng được chuyển về pending để kiểm tra lại.` });
+    if (matched.length < 1) {
+      stopCliProxyApiCapture(cliProxyApiCaptureProcess);
+      return { ok: false, message: 'Không có mail nào trong danh sách tồn tại trong accounts-hotmail.txt.', ...readWorkspaceData() };
+    }
+    count = matched.length;
+    payload.count = matched.length;
+    sendToRenderer('data:changed', readWorkspaceData());
+    sendToRenderer('log:line', { line: `[Verify lại] Đã chuyển ${matched.length}/${verifyAgainEmails.length} mail tồn tại sang pending. Bắt đầu verify lại từng mail.` });
+  }
 
   const ensureOneKhommoHotmailForSession = async (accountIndex = 1, attemptLabel = '') => {
     if (!isKhommoHotmailRun) return { ok: true, purchased: false };
@@ -3136,8 +3193,12 @@ ipcMain.handle('run:start', async (_event, payload) => {
       runMeta = null;
     });
 
-  return { ok: true };
-});
+  return { ok: true, message: verifyAgain ? 'Verify lại started' : 'Run started', startedAt: runMeta.startedAt };
+}
+
+ipcMain.handle('run:start', async (_event, payload) => startRunInternal(payload, { verifyAgain: false }));
+
+ipcMain.handle('run:verify-again', async (_event, payload) => startRunInternal(payload, { verifyAgain: true }));
 
 ipcMain.handle('run:stop', async () => {
   if (!isRunning) return { ok: false, message: 'Không có tiến trình nào đang chạy.' };

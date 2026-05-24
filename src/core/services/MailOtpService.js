@@ -426,17 +426,28 @@ export class MailOtpService {
     });
 
     const callHotmailApi = async ({ label, url, mode }) => {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json, text/plain, */*',
-        },
-        body: JSON.stringify(buildPayload(mode)),
-      });
+      const controller = new AbortController();
+      const timeoutMs = mode === 'messages' ? 9000 : 6500;
+      const timeout = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json, text/plain, */*',
+          },
+          body: JSON.stringify(buildPayload(mode)),
+          signal: controller.signal,
+        });
 
-      if (!response.ok) throw new Error(`${label} HTTP ${response.status}`);
-      return response.json();
+        if (!response.ok) throw new Error(`${label} HTTP ${response.status}`);
+        return response.json();
+      } catch (error) {
+        if (error?.name === 'AbortError') throw new Error(`${label} timeout ${timeoutMs}ms`);
+        throw error;
+      } finally {
+        clearTimeout(timeout);
+      }
     };
 
     const normalizeMailText = (value) => `${value || ''}`
@@ -566,8 +577,10 @@ export class MailOtpService {
     for (let attempt = 0; attempt < normalizedMaxRetries; attempt += 1) {
       if (shouldStop()) return null;
       let fastResendClickedThisAttempt = false;
+      const shouldProbeCodeEndpoints = attempt === normalizedMaxRetries - 1 || attempt % 3 === 2;
+      const activeEndpoints = shouldProbeCodeEndpoints ? endpoints : endpoints.filter((endpoint) => endpoint.mode === 'messages');
 
-      for (const endpoint of endpoints) {
+      for (const endpoint of activeEndpoints) {
         if (shouldStop()) return null;
         try {
           const result = await callHotmailApi(endpoint);
