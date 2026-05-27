@@ -3414,8 +3414,17 @@ ipcMain.handle('proxy:deploy-vercel-relay', async (_event, payload) => {
 });
 ipcMain.handle('proxy:test', async (_event, pool) => {
   try {
-    const result = await testProxyPool(await resolveKunProxyPool(pool));
-    return { ok: true, message: `Proxy hoạt động. Latency ${result.latencyMs}ms.`, result };
+    const resolvedPool = await resolveKunProxyPool(pool);
+    const result = await testProxyPool(resolvedPool);
+    const openAiResult = await testProxyCanOpenChatGpt(resolvedPool);
+    return {
+      ok: true,
+      message: `Proxy hoạt động và mở được auth.openai.com. IP latency ${result.latencyMs}ms, OpenAI latency ${openAiResult.latencyMs || 0}ms.`,
+      result: {
+        ...result,
+        openAi: openAiResult,
+      },
+    };
   } catch (error) {
     return { ok: false, message: error.message };
   }
