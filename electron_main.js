@@ -2178,7 +2178,21 @@ async function startRunInternal(payload = {}, { verifyAgain = false } = {}) {
     if (typeof originalWaitForChatGptCreateState === 'function') {
       ChatGPTAccountCreatorCore.prototype.waitForChatGptCreateState = async function patchedWaitForChatGptCreateState(page, expectedSteps, options = {}) {
         this.__currentCreatePage = page;
-        return originalWaitForChatGptCreateState.call(this, page, expectedSteps, options);
+        const hasFreshMailOtpSubmit = this.__mailOtpSubmittedForCreateSuccess === true
+          && Date.now() - Number(this.__mailOtpSubmittedAt || 0) < 5 * 60 * 1000;
+        const normalizedExpectedSteps = Array.isArray(expectedSteps)
+          ? expectedSteps.map((step) => `${step || ''}`.toLowerCase())
+          : [`${expectedSteps || ''}`.toLowerCase()];
+        const isWaitingProfileAfterOtp = hasFreshMailOtpSubmit
+          && normalizedExpectedSteps.some((step) => /profile|name|age|birth|complete/.test(step))
+          && !normalizedExpectedSteps.includes('home');
+        const nextExpectedSteps = isWaitingProfileAfterOtp
+          ? [...(Array.isArray(expectedSteps) ? expectedSteps : [expectedSteps]).filter(Boolean), 'home']
+          : expectedSteps;
+        if (isWaitingProfileAfterOtp) {
+          this.log?.('✅ Sau OTP mail nếu đã vào ChatGPT home thì kết thúc create ngay, không chờ profile form lặp nữa.');
+        }
+        return originalWaitForChatGptCreateState.call(this, page, nextExpectedSteps, options);
       };
     }
 
