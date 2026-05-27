@@ -39,7 +39,11 @@ app.commandLine.appendSwitch('disable-gpu-rasterization');
 
 const PUBLIC_UPDATE_REPO_OWNER = 'TINVO04';
 const PUBLIC_UPDATE_REPO_NAME = 'Regis_GPT_free';
+const PUBLIC_UPDATE_BRANCH = 'main';
 const PUBLIC_RELEASES_URL = `https://github.com/${PUBLIC_UPDATE_REPO_OWNER}/${PUBLIC_UPDATE_REPO_NAME}/releases`;
+const PUBLIC_REPO_URL = `https://github.com/${PUBLIC_UPDATE_REPO_OWNER}/${PUBLIC_UPDATE_REPO_NAME}`;
+const PUBLIC_RAW_PACKAGE_URL = `https://raw.githubusercontent.com/${PUBLIC_UPDATE_REPO_OWNER}/${PUBLIC_UPDATE_REPO_NAME}/${PUBLIC_UPDATE_BRANCH}/package.json`;
+const PUBLIC_SOURCE_ZIP_URL = `https://codeload.github.com/${PUBLIC_UPDATE_REPO_OWNER}/${PUBLIC_UPDATE_REPO_NAME}/zip/refs/heads/${PUBLIC_UPDATE_BRANCH}`;
 
 let mainWindow = null;
 let activeRun = null;
@@ -47,6 +51,7 @@ let isRunning = false;
 let runMeta = null;
 let latestRunFailure = null;
 let currentSmsPoolCountry = SMSPoolService.normalizeCountry(12);
+let currentSmsPoolMaxPrice = '';
 let workspaceState = null;
 let preflightState = null;
 let authState = {
@@ -55,6 +60,7 @@ let authState = {
 };
 let updateState = {
   checking: false,
+  sourceMode: !app.isPackaged,
   available: false,
   downloading: false,
   downloaded: false,
@@ -70,6 +76,7 @@ let updateState = {
   checkedAt: '',
   downloadedAt: '',
   setupExePath: '',
+  sourceZipPath: '',
   runningExePath: process.execPath,
   releaseUrl: PUBLIC_RELEASES_URL,
   error: '',
@@ -939,6 +946,85 @@ function getReleaseDate(info) {
   return `${candidate}`.trim();
 }
 
+function compareSemver(left = '0.0.0', right = '0.0.0') {
+  const normalize = (value) => `${value || '0.0.0'}`
+    .replace(/^v/i, '')
+    .split('-')[0]
+    .split('.')
+    .map((part) => Number.parseInt(part, 10) || 0);
+  const a = normalize(left);
+  const b = normalize(right);
+  for (let index = 0; index < Math.max(a.length, b.length, 3); index += 1) {
+    const diff = (a[index] || 0) - (b[index] || 0);
+    if (diff !== 0) return diff > 0 ? 1 : -1;
+  }
+  return 0;
+}
+
+async function fetchJsonUrl(url) {
+  const response = await fetch(url, {
+    headers: {
+      Accept: 'application/json',
+      'User-Agent': `${PUBLIC_UPDATE_REPO_NAME}/${APP_VERSION}`,
+    },
+  });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  return response.json();
+}
+
+async function downloadFile(url, targetPath) {
+  await fs.promises.mkdir(path.dirname(targetPath), { recursive: true });
+  await new Promise((resolve, reject) => {
+    const file = fs.createWriteStream(targetPath);
+    const request = https.get(url, { headers: { 'User-Agent': `${PUBLIC_UPDATE_REPO_NAME}/${APP_VERSION}` } }, (response) => {
+      if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
+        file.close(() => fs.rm(targetPath, { force: true }, () => {}));
+        downloadFile(response.headers.location, targetPath).then(resolve, reject);
+        return;
+      }
+      if (response.statusCode !== 200) {
+        file.close(() => fs.rm(targetPath, { force: true }, () => {}));
+        reject(new Error(`HTTP ${response.statusCode}`));
+        return;
+      }
+      response.pipe(file);
+      file.on('finish', () => file.close(resolve));
+    });
+    request.on('error', (error) => {
+      file.close(() => fs.rm(targetPath, { force: true }, () => {}));
+      reject(error);
+    });
+  });
+}
+
+async function runCommand(command, args = [], options = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { cwd: appRootDir, windowsHide: true, shell: false, ...options });
+    let output = '';
+    child.stdout?.on('data', (chunk) => { output += chunk.toString('utf-8'); });
+    child.stderr?.on('data', (chunk) => { output += chunk.toString('utf-8'); });
+    child.once('error', reject);
+    child.once('exit', (code) => {
+      if (code === 0) resolve(output);
+      else reject(new Error(output.trim() || `${command} exited with code ${code}`));
+    });
+  });
+}
+
+function getNpmCommand() {
+  return process.platform === 'win32' ? 'npm.cmd' : 'npm';
+}
+
+function copySourceUpdateFiles(sourceDir, targetDir) {
+  const blocked = new Set(['.git', 'node_modules', 'release', 'release_build_protected', '.protected_release']);
+  for (const entry of fs.readdirSync(sourceDir, { withFileTypes: true })) {
+    if (blocked.has(entry.name)) continue;
+    const sourcePath = path.join(sourceDir, entry.name);
+    const targetPath = path.join(targetDir, entry.name);
+    fs.cpSync(sourcePath, targetPath, { recursive: true, force: true });
+  }
+}
+
 function markUpdateIdleError(message) {
   setUpdateState({
     checking: false,
@@ -964,6 +1050,12 @@ function markUpdateIdleError(message) {
 function configureAutoUpdater() {
   if (updaterInitialized) return;
   updaterInitialized = true;
+
+  if (!app.isPackaged) {
+    updaterReady = true;
+    setUpdateState({ sourceMode: true, releaseUrl: PUBLIC_REPO_URL });
+    return;
+  }
 
   autoUpdater.setFeedURL({
     provider: 'github',
@@ -1081,6 +1173,41 @@ async function checkForAppUpdate() {
     return { ok: false, message: updateState.error, update: updateState };
   }
 
+  if (!app.isPackaged) {
+    try {
+      setUpdateState({ checking: true, sourceMode: true, error: '', checkedAt: new Date().toISOString() });
+      const remotePackage = await fetchJsonUrl(PUBLIC_RAW_PACKAGE_URL);
+      const latestVersion = `${remotePackage?.version || APP_VERSION}`.trim() || APP_VERSION;
+      const available = compareSemver(latestVersion, APP_VERSION) > 0;
+      setUpdateState({
+        checking: false,
+        sourceMode: true,
+        available,
+        downloading: false,
+        downloaded: false,
+        currentVersion: APP_VERSION,
+        latestVersion,
+        releaseName: remotePackage?.name ? `${remotePackage.name}@${latestVersion}` : `Source ${latestVersion}`,
+        releaseDate: '',
+        releaseNotes: available ? [`Source repo ${PUBLIC_UPDATE_REPO_OWNER}/${PUBLIC_UPDATE_REPO_NAME} có version mới.`] : [],
+        progressPercent: 0,
+        progressTransferred: 0,
+        progressTotal: 0,
+        bytesPerSecond: 0,
+        checkedAt: new Date().toISOString(),
+        downloadedAt: '',
+        setupExePath: '',
+        sourceZipPath: '',
+        releaseUrl: PUBLIC_REPO_URL,
+        error: '',
+      });
+      return { ok: true, update: updateState };
+    } catch (error) {
+      markUpdateIdleError(`Không đọc được package.json trên GitHub: ${error.message}`);
+      return { ok: false, message: updateState.error, update: updateState };
+    }
+  }
+
   try {
     await autoUpdater.checkForUpdates();
     return { ok: true, update: updateState };
@@ -1107,6 +1234,27 @@ async function downloadAppUpdate() {
     return { ok: true, update: updateState, alreadyDownloading: true };
   }
 
+  if (!app.isPackaged) {
+    try {
+      const sourceZipPath = path.join(userDataDir, `source-update-${updateState.latestVersion || 'latest'}.zip`);
+      setUpdateState({ downloading: true, sourceMode: true, error: '', progressPercent: 0 });
+      await downloadFile(PUBLIC_SOURCE_ZIP_URL, sourceZipPath);
+      setUpdateState({
+        downloading: false,
+        downloaded: true,
+        sourceMode: true,
+        sourceZipPath,
+        downloadedAt: new Date().toISOString(),
+        progressPercent: 100,
+        error: '',
+      });
+      return { ok: true, update: updateState };
+    } catch (error) {
+      markUpdateIdleError(`Tải source update thất bại: ${error.message}`);
+      return { ok: false, message: updateState.error, update: updateState };
+    }
+  }
+
   try {
     setUpdateState({ downloading: true, error: '' });
     const downloadedFiles = await autoUpdater.downloadUpdate();
@@ -1130,6 +1278,29 @@ async function quitAndInstallAppUpdate() {
     return { ok: false, message: 'Bản cập nhật chưa tải xong.' };
   }
 
+  if (!app.isPackaged) {
+    try {
+      const sourceZipPath = updateState.sourceZipPath;
+      if (!sourceZipPath || !fs.existsSync(sourceZipPath)) return { ok: false, message: 'Không tìm thấy file source update đã tải.' };
+      const extractDir = path.join(userDataDir, 'source-update-extract');
+      await fs.promises.rm(extractDir, { recursive: true, force: true });
+      await fs.promises.mkdir(extractDir, { recursive: true });
+      await runCommand('tar.exe', ['-xf', sourceZipPath, '-C', extractDir]);
+      const [extractedRootName] = fs.readdirSync(extractDir).filter(Boolean);
+      const extractedRoot = extractedRootName ? path.join(extractDir, extractedRootName) : '';
+      if (!extractedRoot || !fs.existsSync(path.join(extractedRoot, 'package.json'))) {
+        return { ok: false, message: 'Source update không hợp lệ: thiếu package.json.' };
+      }
+      copySourceUpdateFiles(extractedRoot, appRootDir);
+      await runCommand(getNpmCommand(), ['install'], { cwd: appRootDir });
+      setUpdateState({ downloaded: false, available: false, sourceZipPath: '', error: '' });
+      setImmediate(() => app.relaunch({ args: process.argv.slice(1) }) && app.exit(0));
+      return { ok: true, sourceMode: true };
+    } catch (error) {
+      return { ok: false, message: `Cài source update thất bại: ${error.message}` };
+    }
+  }
+
   setImmediate(() => {
     autoUpdater.quitAndInstall(false, true);
   });
@@ -1137,7 +1308,7 @@ async function quitAndInstallAppUpdate() {
 }
 
 async function openUpdateReleasePage() {
-  const targetUrl = updateState.releaseUrl || PUBLIC_RELEASES_URL;
+  const targetUrl = updateState.releaseUrl || (app.isPackaged ? PUBLIC_RELEASES_URL : PUBLIC_REPO_URL);
   await shell.openExternal(targetUrl);
   return { ok: true, url: targetUrl };
 }
@@ -1436,6 +1607,7 @@ function normalizeConfigPatch(payload = {}) {
   return {
     smspool_key: keepSecret(payload?.smspoolKey, current.smspool_key),
     smspool_country: Math.max(1, Number.parseInt(payload?.smsPoolCountry ?? current.smspool_country ?? 12, 10) || 12),
+    smspool_max_price: SMSPoolService.normalizeMaxPrice(payload?.smsPoolMaxPrice ?? current.smspool_max_price ?? ''),
     password: keepString(payload?.password, current.password, '@1234567890a'),
     selected_mail_domain: keepLowerString(payload?.selectedMailDomain, current.selected_mail_domain, 'thangterter.online'),
     random_mail_domain: payload?.randomMailDomain === true,
@@ -1650,9 +1822,11 @@ async function startRunInternal(payload = {}, { verifyAgain = false } = {}) {
   const smspoolKey = (payload?.smspoolKey || '').trim();
   const requestedSmsPoolCountry = payload?.smsPoolCountry ?? savedConfig.smspool_country ?? 12;
   const smsPoolCountry = SMSPoolService.normalizeCountry(requestedSmsPoolCountry);
+  const smsPoolMaxPrice = SMSPoolService.normalizeMaxPrice(payload?.smsPoolMaxPrice ?? savedConfig.smspool_max_price ?? '');
   currentSmsPoolCountry = smsPoolCountry;
+  currentSmsPoolMaxPrice = smsPoolMaxPrice;
   SMSPoolService.onStatus = (line) => sendToRenderer('log:line', { line });
-  sendToRenderer('log:line', { line: `[SMSPool] Country RUN hiện tại: ${smsPoolCountry.name} (${smsPoolCountry.dialCode}) • ID ${smsPoolCountry.id}` });
+  sendToRenderer('log:line', { line: `[SMSPool] Country RUN hiện tại: ${smsPoolCountry.name} (${smsPoolCountry.dialCode}) • ID ${smsPoolCountry.id} • max_price=${smsPoolMaxPrice || smsPoolCountry.maxPrice}` });
   const password = (payload?.password || '').trim();
   const routerPassword = `${payload?.routerPassword || ''}`.trim();
   const vpnEnabled = payload?.vpnEnabled !== false;
@@ -2645,6 +2819,7 @@ async function startRunInternal(payload = {}, { verifyAgain = false } = {}) {
         if (smsService) {
           smsService.__smsRetryCore = this;
           smsService.country = SMSPoolService.normalizeCountry(currentSmsPoolCountry?.id ?? currentSmsPoolCountry ?? 12);
+          smsService.maxPrice = SMSPoolService.normalizeMaxPrice(currentSmsPoolMaxPrice);
         }
         this.__smsPhoneRetryContext = { smsService, excludedOrderIds, incorrectOrderIds, exhaustedOrderIds };
         const country = getConfiguredPhoneCountry();
@@ -3049,6 +3224,7 @@ async function startRunInternal(payload = {}, { verifyAgain = false } = {}) {
     mode: modeOverride,
     smspoolKey,
     smsPoolCountry: smsPoolCountry.id,
+    smsPoolMaxPrice,
     password,
     routerPassword,
     selectedMailDomain: selectedMailDomain === 'hotmail-khommo' ? 'hotmail' : selectedMailDomain,

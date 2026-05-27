@@ -16,9 +16,18 @@ export class SMSPoolService {
     return SMSPoolService.COUNTRIES[id] || SMSPoolService.COUNTRIES[12];
   }
 
+  static normalizeMaxPrice(value = '') {
+    const raw = `${value ?? ''}`.trim().replace(',', '.');
+    if (!raw) return '';
+    const parsed = Number.parseFloat(raw);
+    if (!Number.isFinite(parsed) || parsed <= 0) return '';
+    return parsed.toFixed(2);
+  }
+
   constructor(apiKey, options = {}) {
     this.apiKey = apiKey;
     this.country = SMSPoolService.normalizeCountry(options.country ?? SMSPoolService.defaultCountry);
+    this.maxPrice = SMSPoolService.normalizeMaxPrice(options.maxPrice ?? '');
   }
 
   isStopped(shouldStop) {
@@ -104,14 +113,15 @@ export class SMSPoolService {
 
   async buyNumber(shouldStop = () => false) {
     const country = SMSPoolService.normalizeCountry(this.country?.id ?? this.country);
-    const url = `https://api.smspool.net/purchase/sms?key=${this.apiKey}&service=671&country=${country.id}&max_price=${country.maxPrice}`;
+    const maxPrice = SMSPoolService.normalizeMaxPrice(this.maxPrice) || country.maxPrice;
+    const url = `https://api.smspool.net/purchase/sms?key=${this.apiKey}&service=671&country=${country.id}&max_price=${maxPrice}`;
     const maxAttempts = 4;
     const retryDelayMs = country.id === 1 ? 15000 : 30000;
     let lastMessage = '';
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       try {
-        this.logStatus(`[SMSPool] Đang thuê số ${country.name} ${country.dialCode} (ID ${country.id}) cho OpenAI/ChatGPT, lần ${attempt}/${maxAttempts}...`);
+        this.logStatus(`[SMSPool] Đang thuê số ${country.name} ${country.dialCode} (ID ${country.id}) cho OpenAI/ChatGPT, max_price=${maxPrice}, lần ${attempt}/${maxAttempts}...`);
         const res = await this.fetchJson(url, { timeoutMs: 15000, shouldStop });
         if (res.success) {
           this.logStatus(`[SMSPool] Đã thuê số mới ${country.name} ${country.dialCode}: +${res.cc}${res.phonenumber} (ID: ${res.orderid})`);

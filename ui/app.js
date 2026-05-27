@@ -18,6 +18,7 @@ const el = {
   preflightList: document.getElementById('preflight-list'),
   smsKey: document.getElementById('sms-key-input'),
   smsCountry: document.getElementById('sms-country-select'),
+  smsMaxPrice: document.getElementById('sms-max-price-input'),
   smsBalanceCard: document.getElementById('sms-balance-card'),
   smsBalanceValue: document.getElementById('sms-balance-value'),
   smsBalanceMeta: document.getElementById('sms-balance-meta'),
@@ -233,6 +234,7 @@ function initRuntimeInputs() {
     runtimeInputs.length,
     el.smsKey,
     el.smsCountry,
+    el.smsMaxPrice,
     el.smsBalanceCheckBtn,
     el.smsPoolOpenBtn,
     el.clonemupKey,
@@ -1012,6 +1014,7 @@ function renderRuntimeConfig(config = {}) {
     const savedSmsCountry = Number.parseInt(config.smspool_country ?? 1, 10) || 1;
     el.smsCountry.value = [1, 9].includes(savedSmsCountry) ? `${savedSmsCountry}` : '1';
   }
+  if (el.smsMaxPrice) el.smsMaxPrice.value = `${config.smspool_max_price ?? ''}`.trim();
   if (config.password !== undefined) el.password.value = config.password || '';
   if (config.router_password !== undefined) el.routerPassword.value = config.router_password || '';
   if (el.verifyProvider && config.verify_provider !== undefined) el.verifyProvider.value = normalizeVerifyProvider(config.verify_provider);
@@ -1081,7 +1084,9 @@ function renderUpdateState(nextState) {
   if (updateState.checking) {
     el.updateCard.classList.add('is-checking');
     el.updateVersionText.textContent = `Version ${currentVersion} • Đang kiểm tra...`;
-    el.updateMetaText.textContent = 'Đang đọc metadata bản phát hành từ GitHub Releases';
+    el.updateMetaText.textContent = updateState.sourceMode
+      ? 'Đang đọc package.json từ GitHub source repo'
+      : 'Đang đọc metadata bản phát hành từ GitHub Releases';
     el.checkUpdateBtn.disabled = true;
     return;
   }
@@ -1090,7 +1095,9 @@ function renderUpdateState(nextState) {
     el.updateCard.classList.add('is-error');
     el.updateVersionText.textContent = `Version ${currentVersion} • Check update thất bại`;
     el.updateMetaText.textContent = updateState.error;
-    el.updateNotesText.textContent = 'Có thể mở trang Releases public để tải bản mới thủ công nếu cần.';
+    el.updateNotesText.textContent = updateState.sourceMode
+      ? 'Có thể mở GitHub repo để tải source mới thủ công nếu cần.'
+      : 'Có thể mở trang Releases public để tải bản mới thủ công nếu cần.';
     el.updateNotesText.classList.remove('hidden');
     el.openReleasePageBtn.classList.remove('hidden');
     return;
@@ -1100,8 +1107,8 @@ function renderUpdateState(nextState) {
     el.updateCard.classList.add('is-downloaded');
     el.updateVersionText.textContent = `Version ${currentVersion} • Sẵn sàng cài ${latestVersion}`;
     el.updateMetaText.textContent = downloadedAtText
-      ? `Đã tải xong lúc ${downloadedAtText}. Bấm nút để khởi động lại và cài.`
-      : 'Bản cập nhật đã tải xong. Bấm nút để khởi động lại và cài.';
+      ? `Đã tải xong lúc ${downloadedAtText}. Bấm nút để ${updateState.sourceMode ? 'ghi đè source, npm install và khởi động lại' : 'khởi động lại và cài'}.`
+      : `Bản cập nhật đã tải xong. Bấm nút để ${updateState.sourceMode ? 'ghi đè source, npm install và khởi động lại' : 'khởi động lại và cài'}.`;
     el.installUpdateBtn.classList.remove('hidden');
     el.openReleasePageBtn.classList.remove('hidden');
     return;
@@ -1121,7 +1128,7 @@ function renderUpdateState(nextState) {
   if (updateState.available) {
     el.updateCard.classList.add('is-available');
     el.updateVersionText.textContent = `Version ${currentVersion} • Có bản mới ${latestVersion}`;
-    el.updateMetaText.textContent = `${updateState.releaseName || 'GitHub Release mới'}${releaseDateText ? ` • ${releaseDateText}` : ''}`;
+    el.updateMetaText.textContent = `${updateState.releaseName || (updateState.sourceMode ? 'GitHub source mới' : 'GitHub Release mới')}${releaseDateText ? ` • ${releaseDateText}` : ''}`;
     el.downloadUpdateBtn.classList.remove('hidden');
     el.openReleasePageBtn.classList.remove('hidden');
     return;
@@ -1552,6 +1559,7 @@ function getConfigPayload() {
   return {
     smspoolKey: el.smsKey.value.trim(),
     smsPoolCountry: [1, 9].includes(Number.parseInt(el.smsCountry?.value || '1', 10)) ? Number.parseInt(el.smsCountry?.value || '1', 10) : 1,
+    smsPoolMaxPrice: el.smsMaxPrice?.value.trim() || '',
     clonemupApiKey: el.clonemupKey?.value.trim() || '',
     clonemupHotmailProductId: Math.max(1, Number.parseInt(el.clonemupProductId?.value || '7614', 10) || 7614),
     khommoApiKey: el.khommoKey?.value.trim() || '',
@@ -1677,7 +1685,7 @@ async function handleRun() {
     9: 'Indonesia (+62)',
   };
   setRunningState(true, `Running: ${payload.mode}`);
-  pushLog(`[UI] Start run mode=${payload.mode}, count=${payload.count}, smsCountry=${smsCountryLabels[payload.smsPoolCountry] || `ID ${payload.smsPoolCountry}`}, verifyProvider=${payload.verifyProvider === 'cliproxyapi' ? 'CLIProxyAPI' : '9Router'}`);
+  pushLog(`[UI] Start run mode=${payload.mode}, count=${payload.count}, smsCountry=${smsCountryLabels[payload.smsPoolCountry] || `ID ${payload.smsPoolCountry}`}, smsMaxPrice=${payload.smsPoolMaxPrice || 'auto'}, verifyProvider=${payload.verifyProvider === 'cliproxyapi' ? 'CLIProxyAPI' : '9Router'}`);
   if (payload.verifyProvider === 'cliproxyapi') {
     pushLog('[CLIProxyAPI] App sẽ chạy từng account riêng: trước mỗi account bắt OAuth URL mới, account xong thì đóng process callback cũ.');
   }
@@ -1739,7 +1747,7 @@ async function handleVerifyAgain() {
 
   setRunningState(true, 'Running: verify lại');
   pushLog(`[Verify lại] Nhận ${uniqueEmails.length} mail từ danh sách. App sẽ lọc accounts-hotmail.txt, chuyển mail tồn tại sang pending rồi verify lại.`);
-  pushLog(`[UI] Start run mode=verify_again, count=${uniqueEmails.length}, smsCountry=${smsCountryLabels[runPayload.smsPoolCountry] || `ID ${runPayload.smsPoolCountry}`}, verifyProvider=${runPayload.verifyProvider === 'cliproxyapi' ? 'CLIProxyAPI' : '9Router'}`);
+  pushLog(`[UI] Start run mode=verify_again, count=${uniqueEmails.length}, smsCountry=${smsCountryLabels[runPayload.smsPoolCountry] || `ID ${runPayload.smsPoolCountry}`}, smsMaxPrice=${runPayload.smsPoolMaxPrice || 'auto'}, verifyProvider=${runPayload.verifyProvider === 'cliproxyapi' ? 'CLIProxyAPI' : '9Router'}`);
   const result = await window.desktopAPI.startVerifyAgain(runPayload);
   if (!result.ok) {
     if (result.preflight) renderPreflight(result.preflight);
@@ -2003,7 +2011,7 @@ async function checkForUpdates(logResult = true) {
 
   if (!logResult) return;
   if (result.ok && result.update?.available) {
-    pushLog(`[UPDATE] Có bản mới ${result.update.latestVersion}`);
+    pushLog(`[UPDATE] Có bản mới ${result.update.latestVersion}${result.update.sourceMode ? ' trên GitHub source repo' : ''}`);
     return;
   }
 
@@ -2032,7 +2040,7 @@ async function handleDownloadUpdate() {
     return;
   }
 
-  pushLog('[UPDATE] Đã bắt đầu tải bản cập nhật.');
+  pushLog(updateState.sourceMode ? '[UPDATE] Đã bắt đầu tải source zip từ GitHub.' : '[UPDATE] Đã bắt đầu tải bản cập nhật.');
 }
 
 async function handleInstallUpdate() {
@@ -2042,7 +2050,7 @@ async function handleInstallUpdate() {
     return;
   }
 
-  pushLog('[UPDATE] App sẽ khởi động lại để cài bản mới.');
+  pushLog(updateState.sourceMode ? '[UPDATE] App sẽ ghi đè source, chạy npm install và khởi động lại.' : '[UPDATE] App sẽ khởi động lại để cài bản mới.');
 }
 
 async function handleOpenReleasePage() {

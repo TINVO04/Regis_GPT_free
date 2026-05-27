@@ -256,6 +256,12 @@
                 </select>
               </label>
 
+              <label class="field field-wide" for="sms-max-price-input">
+                <span>SMSPool max price</span>
+                <input id="sms-max-price-input" type="number" min="0.01" step="0.01" placeholder="Auto theo quốc gia" autocomplete="off" />
+                <small>Để trống = dùng giá mặc định của country. Tăng lên 0.10 nếu SMSPool báo không có pool dưới 0.07.</small>
+              </label>
+
               <div class="sms-balance-card field-wide" id="sms-balance-card" aria-live="polite">
                 <div class="sms-balance-copy">
                   <span class="eyebrow">SMSPool Balance</span>
